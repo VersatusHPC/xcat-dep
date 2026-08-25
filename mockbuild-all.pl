@@ -1109,7 +1109,6 @@ sub publish_genesis_release_packages {
     return $copied;
 }
 
-# Dry runs copy nothing, but they must still report the shared packages a real run publishes.
 sub preview_genesis_release_packages {
     my ($prefix, $destination_root) = @_;
     my @files = genesis_release_files($prefix);
@@ -1373,8 +1372,7 @@ sub _rmdir_lock {
     rmdir $lock;
 }
 
-# Release locks on every exit path, but only from the process that acquired them.
-# Forked build workers inherit the lock list and must leave the parent's locks alone.
+# Forked workers inherit publication state; only the owner may restore or unlock it.
 sub _restore_common_repository {
     return unless defined($LOCK_OWNER_PID) && $$ == $LOCK_OWNER_PID;
     remove_tree($COMMON_STAGE)

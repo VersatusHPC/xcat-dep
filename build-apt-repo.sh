@@ -83,8 +83,6 @@ declare -A CODENAME_MAP=(
 )
 ARCHITECTURES=(amd64 ppc64el)
 
-# Versions to build. Positional DIST arguments select a subset. With no DIST
-# argument, metadata is rebuilt for every known suite.
 SELECTED_VERS=()
 SUBSET=0
 
@@ -147,9 +145,7 @@ REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 APT_DIR="${APT_DIR:-$REPO_ROOT/repos/apt}"
 GENESIS_POOL="$APT_DIR/$GENESIS_POOL_RELATIVE"
 
-# Publication is one transaction over a shared tree. The lock also covers verification, so a
-# second writer cannot replace a package between verification and metadata generation. mkdir
-# is used because it remains reliable when the repository is stored on NFS.
+# Hold an NFS-safe mkdir lock through verification and metadata generation.
 acquire_apt_lock() {
     local lock="$APT_DIR/.lock"
     [[ $DRY_RUN -eq 0 ]] || return 0
@@ -309,8 +305,7 @@ copy_genesis_deb() {
             || die "Package collision with different content: $destination"
         return
     fi
-    # The pool needs a file of its own. A hard link would let a later write through either
-    # path change both the verified release and the published package.
+    # A hard link would let later input changes alter the published package.
     cp --reflink=auto -- "$source" "$destination" 2>/dev/null \
         || cp -- "$source" "$destination"
     "$GENESIS_VERIFIER" \
