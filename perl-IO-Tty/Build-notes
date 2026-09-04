@@ -6,3 +6,12 @@ build defines HAVE__GETPTY, and IO/Tty/Tty.so then fails to load with
 the link fails and the probe answers correctly.
 
 Source: https://cpan.metacpan.org/authors/id/T/TO/TODDR/IO-Tty-1.20.tar.gz
+
+xcat-dep ships IO-Tty 1.20-1. EL8 PowerTools carries 1.12-11 and EL9 CRB carries
+1.16-4, so the xcat-dep rpm outranks the distribution copy on a management node
+that enables those repositories. Both distribution builds load correctly; they
+are shadowed because a service node reads no CRB and one repository serves both
+roles. 1.20 is the same upstream release the distributions package, with the same
+license, the same vendor paths and the same perl(IO::Tty) provides, so the higher
+version is an upgrade and not a fork. EL10 CRB carries 1.20-7, which outranks
+1.20-1, so the distribution copy still wins there.
