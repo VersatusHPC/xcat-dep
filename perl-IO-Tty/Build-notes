@@ -1,1 +1,8 @@
-For RHEL 8, run "rpmbuild --rebuild perl-IO-Tty-1.12-13.fc29.src.rpm".
+IO-Tty 1.12 and older do not build on EL8 or newer. Makefile.PL probes each pty
+function by compiling a program that only takes its address; the current
+toolchain drops that reference, so the probe reports _getpty as present, the
+build defines HAVE__GETPTY, and IO/Tty/Tty.so then fails to load with
+"undefined symbol: _getpty". IO-Tty 1.20 calls the function in the probe, so
+the link fails and the probe answers correctly.
+
+Source: https://cpan.metacpan.org/authors/id/T/TO/TODDR/IO-Tty-1.20.tar.gz
