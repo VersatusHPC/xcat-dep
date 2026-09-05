@@ -15,7 +15,7 @@ use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_mo
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
                       parse_evr evr_constraint_ok parse_pin rpmkeys_checksig_problem
-                      bump_dep_release_suffix build_mock_uniqueext);
+                      bump_dep_release_suffix build_mock_uniqueext target_profile);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
 sub quiet(&) {
@@ -232,6 +232,49 @@ is(rpm_is_signed("/no/such/file.rpm"), 0, 'rpm_is_signed on a missing file is 0'
 
 # ---- rpm_release: absent package -> undef (used by the --build-number bump-landed check) ---------
 is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is undef when no rpm matches');
+
+# ---- target_profile: every family a pipeline builds resolves to its own deploy directory -------
+# mockbuild-all.pl derives the deploy subdir, the arch and the perl build mode from the target NAME.
+# xcat-dep-suse-cd asks for opensuse-leap-<ver>-<arch>; when that name resolves to nothing the whole
+# target dies before the first mock runs ("Could not parse EL release from target ...").
+{
+    my $el = target_profile('alma+epel-10-x86_64', 'x86_64');
+    is($el->{family},     'el',                  'EL target is the el family');
+    is($el->{rel},        '10',                  '... release 10');
+    is($el->{osdir},      'rh10',                '... deploys under rh10');
+    is($el->{arch},       'x86_64',              '... builds for the host arch');
+    is($el->{noarch_cfg}, 'alma+epel-10-x86_64', '... builds its noarch deps in its own chroot');
+    is($el->{forcearch},  0,                     '... is not cross-built');
+    is($el->{epel_gap},   0,                     '... takes the EPEL perl deps from EPEL');
+
+    my $rv = target_profile('rocky-10-riscv64-xcat', 'x86_64');
+    is($rv->{family},     'el',              'riscv64 target is the el family');
+    is($rv->{osdir},      'rh10',            '... deploys under rh10');
+    is($rv->{arch},       'riscv64',         '... builds riscv64 rpms');
+    is($rv->{noarch_cfg}, 'rocky-10-x86_64', '... builds its noarch deps in the host-arch chroot');
+    is($rv->{forcearch},  1,                 '... is cross-built');
+    is($rv->{epel_gap},   1,                 '... builds the perl deps EPEL would have supplied');
+
+    for my $c (['opensuse-leap-15.6-x86_64', 'x86_64', 'sles15'],
+               ['opensuse-leap-15.6-ppc64le', 'ppc64le', 'sles15'],
+               ['opensuse-leap-16.0-x86_64', 'x86_64', 'sles16']) {
+        my ($t, $ha, $osdir) = @{$c};
+        my $p = eval { target_profile($t, $ha) };
+        my $err = $@;
+        ok(defined $p, "$t resolves to a profile") or diag($err);
+        is(($p || {})->{family},     'suse', "... $t is the suse family");
+        is(($p || {})->{osdir},      $osdir, "... $t deploys under $osdir");
+        is(($p || {})->{arch},       $ha,    "... $t builds for the host arch");
+        is(($p || {})->{noarch_cfg}, $t,     "... $t builds its noarch deps in its own chroot");
+        is(($p || {})->{forcearch},  0,      "... $t is not cross-built");
+    }
+}
+
+# ---- an unknown target must not resolve to a silent EL default ---------------------------------
+{
+    my $p = eval { target_profile('debian-13-amd64', 'x86_64') };
+    ok(!defined $p, 'an unrecognized target dies instead of guessing a deploy directory');
+}
 
 # ---- manifest <-> docs consistency: conserver-xcat is in EVERY target section (PR #62 point 7c) --
 # BUILD.md documents conserver-xcat as built for every target; guard that the manifest agrees so the

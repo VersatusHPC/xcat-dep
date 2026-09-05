@@ -20,7 +20,8 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-                      build_mock_uniqueext rpmkeys_checksig_problem);
+                      build_mock_uniqueext rpmkeys_checksig_problem
+                      target_profile);
 # print_step and sh_quote come from MockBuildUtils above; XCAT::BuildUtils carries the same
 # print_step, so it is deliberately NOT imported here (one definition, no redefinition warning).
 use XCAT::BuildUtils qw(
@@ -385,22 +386,6 @@ my @build_targets = $target
     ? ($target)
     : map { resolve_mock_cfg($os_id, $_, $host_arch) } (8, 9, 10);
 
-# What a target builds. The mock-core-configs targets (<os>+epel-<rel>-<arch>) build every
-# dep natively on the host arch. The forcearch targets shipped in mock-configs/ cross-build
-# another arch that has no EPEL: the x86-only bootloaders are not built for it, the EPEL-only
-# perl deps of xCAT are (mockbuild-perl-packages.pl --epel-gap), and the noarch deps are built
-# in the native, EPEL-free chroot of the same release (the rpms are identical for every arch
-# and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
-my %forcearch_targets = (
-    'rocky-10-riscv64-xcat' => {
-        rel          => 10,
-        arch         => 'riscv64',
-        noarch_cfg   => "rocky-10-$host_arch",
-        dep_builders => [qw(grub2-xcat ipmitool-xcat goconserver conserver-xcat)],
-        required     => [qw(ipmitool-xcat grub2-xcat perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
-    },
-);
-
 # NOTE: no dhcp- packages are built here. DHCP backend selection is an install-time
 # rich dep in xCAT.spec (kea if system-release>=10 else /usr/sbin/dhcpd), so there is
 # nothing arch/EL-specific to build or to exclude for el10.
@@ -463,7 +448,7 @@ sub build_one_target {
     # different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
     # cross-contaminate. Fold the target into run_id so each target gets its own tree.
     $run_id = "$target-$run_id" unless index($run_id, $target) >= 0;
-    my $profile = target_profile($target);
+    my $profile = target_profile($target, $host_arch);
     my $rel = $profile->{rel};
     $arch = $profile->{arch};
 
@@ -554,7 +539,7 @@ print "arch:             $arch\n";
 print "host_arch:        $host_arch\n";
 print "forcearch:        $profile->{forcearch}\n";
 print "noarch_cfg:       $profile->{noarch_cfg}\n";
-print "epel:             $profile->{epel}\n";
+print "epel_gap:         $profile->{epel_gap}\n";
 print "os_id:            $os_id\n";
 print "version_id:       $version_id\n";
 print "rel:              $rel\n";
@@ -649,7 +634,7 @@ if (!$skip_build) {
             ($profile->{forcearch}
                 ? ('--target-arch', sh_quote($arch), '--noarch-mock-cfg', sh_quote($profile->{noarch_cfg}))
                 : ()),
-            ($profile->{epel} ? () : ('--epel-gap')),
+            ($profile->{epel_gap} ? ('--epel-gap') : ()),
             '--mock-uniqueext', sh_quote($perl_uniqueext),
             '--result-dir', sh_quote($perl_result),
             '--log-dir', sh_quote($perl_log),
@@ -934,34 +919,6 @@ print "Tarball:               $tarball\n" if !$skip_tarball;
 print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
 
     return { repo_dir => $repo_dir, rel => $rel, profile => $profile };
-}
-
-# The build profile of a target: EL release, arch of the rpms, where its noarch deps are built,
-# which dep builders run and which rpms the deployed repo must contain.
-sub target_profile {
-    my ($target) = @_;
-    if (my $fa = $forcearch_targets{$target}) {
-        return {
-            %{$fa},
-            forcearch => 1,
-            epel      => 0,
-        };
-    }
-    my ($rel) = $target =~ /epel-(\d+)-/;
-    die "Could not parse EL release from target '$target'\n" unless defined $rel;
-    return {
-        rel          => $rel,
-        arch         => $host_arch,
-        noarch_cfg   => $target,
-        forcearch    => 0,
-        epel         => 1,
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
-        # xCAT Requires all of these on every arch, and every one of them builds natively on
-        # every arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed
-        # artifacts), so a self-sufficient per-arch build produces the whole set.
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
-                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
-    };
 }
 
 # The forcearch targets are shipped in mock-configs/; mock, and the include('/etc/mock/<cfg>.cfg')

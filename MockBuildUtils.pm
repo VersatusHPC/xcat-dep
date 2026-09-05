@@ -20,8 +20,74 @@ our @EXPORT_OK = qw(
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-    build_mock_uniqueext
+    build_mock_uniqueext target_profile
 );
+
+# The forcearch targets are cross-built through qemu-user-static from a mock config this
+# repository ships in mock-configs/. They have no EPEL, so the x86-only bootloaders are not built
+# for them and the perl deps EL takes from EPEL are built here instead (--epel-gap). Their noarch
+# deps build in the native chroot of the same release: the rpms are identical for every arch and an
+# emulated build is an order of magnitude slower. See BUILD.md ("riscv64").
+my %FORCEARCH_TARGETS = (
+    'rocky-10-riscv64-xcat' => {
+        rel          => 10,
+        arch         => 'riscv64',
+        noarch_cfg   => 'rocky-10-HOSTARCH',
+        dep_builders => [qw(grub2-xcat ipmitool-xcat goconserver conserver-xcat)],
+        required     => [qw(ipmitool-xcat grub2-xcat perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+    },
+);
+
+#-------------------------------------------------------------------------------
+
+=head3 target_profile
+
+Descriptions:
+    What a mock target builds and where the built repository is deployed.
+
+Arguments:
+    $target    - the mock config name, e.g. alma+epel-10-x86_64
+    $host_arch - the arch of the build host, from uname -m
+
+Returns:
+    A hash ref: rel, arch, osdir, family, noarch_cfg, forcearch, epel_gap,
+    dep_builders, required. Dies when the target name matches no known family.
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub target_profile {
+    my ($target, $host_arch) = @_;
+    if (my $fa = $FORCEARCH_TARGETS{$target}) {
+        my $noarch_cfg = $fa->{noarch_cfg};
+        $noarch_cfg =~ s/HOSTARCH/$host_arch/;
+        return {
+            %{$fa},
+            noarch_cfg => $noarch_cfg,
+            osdir      => "rh$fa->{rel}",
+            family     => 'el',
+            forcearch  => 1,
+            epel_gap   => 1,
+        };
+    }
+    my ($rel) = $target =~ /epel-(\d+)-/;
+    die "Could not parse EL release from target '$target'\n" unless defined $rel;
+    return {
+        rel          => $rel,
+        arch         => $host_arch,
+        osdir        => "rh$rel",
+        family       => 'el',
+        noarch_cfg   => $target,
+        forcearch    => 0,
+        epel_gap     => 0,
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        # xCAT Requires all of these on every arch, and every one of them builds natively on
+        # every arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed
+        # artifacts), so a self-sufficient per-arch build produces the whole set.
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+    };
+}
 
 # install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
 # given /etc/os-release ID. Kept as data, beside the code that needs them, because the failure mode
