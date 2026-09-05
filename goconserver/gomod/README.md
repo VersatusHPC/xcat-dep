@@ -6,9 +6,19 @@ into the freshly cloned upstream tree and compile with `GOFLAGS=-mod=mod`, so mo
 from the Go proxy but **pinned and integrity-checked by `go.sum`** — the build is reproducible, with
 **no `go mod tidy`** at build time (which would float transitive versions from the network).
 
-The `go` directive (currently go 1.25.12) is the floor every builder must meet: the `GO_PIN`
-toolchain of `../sbuild.pl` and the `golang` of the EL10 mock chroot. Regenerate with the lowest of
-them, so neither build is rejected.
+The `go` directive (currently go 1.25.0) is the highest requirement in the pinned graph, and every
+builder toolchain must meet it: the `GO_PIN` of `../sbuild.pl` (1.25.12), the `golang` of the EL10
+mock chroot (1.26.4) and the `golang` of the Leap 15.6 chroot (go1.25-1.25.8). All three build with
+`GOTOOLCHAIN=local`, so a directive above the LOWEST of them stops that build before the compiler
+starts. Do not raise the directive to the version of the toolchain that regenerated the file; set it
+to what the graph needs. Read the graph with:
+
+```sh
+go list -m -f '{{.Path}} {{.GoVersion}}' all | sort -k2 -V | tail -1
+```
+
+`t/goconserver_gomod_toolchain.t` builds the pinned graph with the lowest toolchain and fails when
+the directive climbs above it.
 
 ## Regenerate (when bumping `REF` or `GO_PIN`, or a dependency)
 
