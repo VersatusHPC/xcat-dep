@@ -270,6 +270,20 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     }
 }
 
+# ---- every SUSE target the pipeline builds has a manifest section --------------------------------
+# build_one_target dies ("no manifest section for target") before the first mock when the section is
+# absent, so the parsing fix alone does not get a SUSE build past the gate.
+{
+    my %m = read_manifest("$RealBin/../packages-manifest.conf");
+    for my $t ('opensuse-leap-15.6-x86_64', 'opensuse-leap-15.6-ppc64le') {
+        ok(exists $m{$t}, "packages-manifest.conf has a section for $t");
+        my $p = target_profile($t, 'x86_64');
+        my @missing = grep { !exists $m{$t}{$_} } @{ $p->{required} };
+        is_deeply(\@missing, [], "... $t requires every package its profile gates on")
+            or diag("missing in $t: @missing");
+    }
+}
+
 # ---- an unknown target must not resolve to a silent EL default ---------------------------------
 {
     my $p = eval { target_profile('debian-13-amd64', 'x86_64') };
