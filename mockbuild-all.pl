@@ -941,15 +941,17 @@ sub install_mock_cfg {
     chmod 0644, $dst;
 }
 
-# Assemble the built per-target repo into the deployable, signed per-EL layout
-# <repo-dep>/rh<rel>/<arch>: copy the binary rpms, sign, createrepo, and drop the
-# xcat-dep.repo / mklocalrepo.sh / buildinfo.txt (ready to push to xcat.org).
+# Assemble the built per-target repo into the deployable, signed per-family layout
+# <repo-dep>/<osdir>/<arch> -- rh<N> for EL, sles<N> for SUSE: copy the binary rpms, sign,
+# createrepo, and drop the xcat-dep.repo / mklocalrepo.sh / buildinfo.txt (ready to push to
+# xcat.org).
 sub deploy_target {
     my ($tgt, $info) = @_;
-    my $rel   = $info->{rel};
-    my $src   = $info->{repo_dir};
-    my $tarch = $info->{profile}{arch};
-    my $dest  = "$repo_dep/rh$rel/$tarch";
+    my $src    = $info->{repo_dir};
+    my $tarch  = $info->{profile}{arch};
+    my $osdir  = $info->{profile}{osdir};
+    my $family = $info->{profile}{family};
+    my $dest   = "$repo_dep/$osdir/$tarch";
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
 
@@ -978,7 +980,7 @@ sub deploy_target {
         # already correct when it is swapped in.
         remove_genesis_packages($stage, 0) if $genesis_release;
         sign_and_index_repo($stage);
-        write_dep_repo_metadata($stage, $rel, $tarch);
+        write_dep_repo_metadata($stage, $osdir, $family, $tarch);
         # Automatic completeness + signature gate on the freshly signed cell -- the single
         # consolidated gate (verify_target_repo, the same one --verify-repo runs). Asserts every
         # manifest-required package is present at its pinned version, the repomd signature verifies,
@@ -1008,7 +1010,7 @@ sub deploy_target {
     remove_tree($old) if -d $old;
 
     my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
-    print "Deployed rh$rel/$tarch: $n rpms\n";
+    print "Deployed $osdir/$tarch: $n rpms\n";
 }
 
 sub publish_genesis_common_repo {
@@ -1152,8 +1154,11 @@ sub sign_and_index_repo {
 }
 
 sub write_dep_repo_metadata {
-    my ($dir, $rel, $tarch) = @_;
-    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh$rel/$tarch";
+    my ($dir, $osdir, $family, $tarch) = @_;
+    # EL clients read the yum channel, SUSE clients the sles one. Both layouts are
+    # <channel>/devel/xcat-dep/<osdir>/<arch>.
+    my $channel = $family eq 'suse' ? 'sles' : 'yum';
+    my $baseurl = "https://xcat.org/files/xcat/repos/$channel/devel/xcat-dep/$osdir/$tarch";
     my $gpgcheck = $gpg_sign ? 1 : 0;
     my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
     # repo_gpgcheck=1 makes clients verify the DETACHED repomd.xml signature (repomd.xml.asc) against
@@ -1162,7 +1167,7 @@ sub write_dep_repo_metadata {
     open my $r, '>', "$dir/xcat-dep.repo" or die "Cannot write $dir/xcat-dep.repo: $!\n";
     print {$r} <<"EOF";
 [xcat-dep]
-name=xCAT 2 dependencies (rh$rel $tarch)
+name=xCAT 2 dependencies ($osdir $tarch)
 baseurl=$baseurl
 enabled=1
 gpgcheck=$gpgcheck
@@ -1172,7 +1177,7 @@ EOF
     close $r;
 
     write_local_repo_helper($dir);
-    write_buildinfo($dir, "rh$rel/$tarch");
+    write_buildinfo($dir, "$osdir/$tarch");
 }
 
 sub write_common_repo_metadata {

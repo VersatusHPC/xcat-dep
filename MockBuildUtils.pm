@@ -70,8 +70,25 @@ sub target_profile {
             epel_gap   => 1,
         };
     }
+    if (my ($leap) = $target =~ /^opensuse-leap-(\d+)\./) {
+        # openSUSE Leap has no EPEL, so nothing is taken from it and --epel-gap stays off: the
+        # manifest section of the target lists the perl packages Leap does not ship itself.
+        return {
+            rel          => $leap,
+            arch         => $host_arch,
+            osdir        => "sles$leap",
+            family       => 'suse',
+            noarch_cfg   => $target,
+            forcearch    => 0,
+            epel_gap     => 0,
+            dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                                perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        };
+    }
     my ($rel) = $target =~ /epel-(\d+)-/;
-    die "Could not parse EL release from target '$target'\n" unless defined $rel;
+    die "Cannot derive a build profile from target '$target' "
+      . "(expected *+epel-<N>-<arch> or opensuse-leap-<N>.<M>-<arch>)\n" unless defined $rel;
     return {
         rel          => $rel,
         arch         => $host_arch,
