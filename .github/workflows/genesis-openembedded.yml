@@ -53,8 +53,19 @@ jobs:
             t/genesis_openembedded_consumer.t \
             t/lib/XCAT/GenesisReleaseTest.pm
 
+      # The oldest Go any xcat-dep target ships: Leap 15.6 resolves BuildRequires: golang to
+      # go1.25-1.25.8, and goconserver/mockbuild.pl builds with GOTOOLCHAIN=local. The pinned
+      # go.mod must compile with it.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.8'
+          check-latest: false
+
       - name: Run package tests
+        env:
+          GOCONSERVER_MIN_GO: '1.25.8'
         run: |
+          prove -v t/goconserver_gomod_toolchain.t
           prove -v t/mockbuild-all.t
           prove -v t/build_utils.t
           prove -v -It/lib t/genesis_openembedded_release.t
