@@ -842,6 +842,22 @@ sub release_claimed_arches {
     return parse_release_architectures($t);
 }
 
+# staged_pool_arches($cn): the architectures whose staged cell gives $cn at least one deb. This
+# repeats the glob and the OpenEmbedded exclusion assemble_into uses to fill the pool, deliberately:
+# the set that reaches the pool and the set the gate is told to check must be the same set, or an
+# architecture is published that nothing reads. It carries no list of known architectures -- a list
+# here is what let a staged riscv64 cell reach the pool, the flat directory and the tarball with no
+# index and therefore no verification.
+sub staged_pool_arches {
+    my ($cn) = @_;
+    my %a;
+    for my $deb (glob("$staging/$cn/*/*.deb")) {
+        next if basename($deb) =~ /^xcat-genesis-openembedded-/;
+        $a{ basename(dirname($deb)) } = 1;
+    }
+    return sort keys %a;
+}
+
 # resolve_expect_arches($mode, $adir): the architecture set the published repo is REQUIRED to serve.
 #
 # This is the crux of PR #63 review concern #3. It must be a CLAIM someone made, never an inference
@@ -863,13 +879,7 @@ sub resolve_expect_arches {
     }
     my %u = ($arch => 1);
     if ($mode eq 'publish') {
-        for my $cn (@dist_list) {
-            for my $d (glob("$staging/$cn/*")) {
-                next unless -d $d;
-                my $a = basename($d);
-                $u{$a} = 1 if $a =~ /^(amd64|ppc64el)$/;
-            }
-        }
+        for my $cn (@dist_list) { $u{$_} = 1 for staged_pool_arches($cn); }
         print "  expected arches (from the staged set): " . join(' ', sort keys %u) . "\n";
     } else {
         for my $cn (@dist_list) { $u{$_} = 1 for release_claimed_arches($adir, $cn); }
@@ -1091,7 +1101,7 @@ sub assemble_into {
         my $ver = codename_to_version($cn);
         my $pool = "$dir/pool/main/$cn";
         # wipe ONLY this codename's pool+dists in the side tree, then repopulate from validated
-        # staging (all arches: staging/<cn>/{amd64,ppc64el}/*.deb). Wiping first is what removes stale
+        # staging (every staged arch: staging/<cn>/*/*.deb). Wiping first is what removes stale
         # debs from a prior run so the published repo never carries a mixture.
         wipe_tree($pool, "$dir/dists/$cn", "$dir/$ver");
         make_path($pool, "$dir/$ver");
@@ -1102,7 +1112,16 @@ sub assemble_into {
         die "FATAL: [$cn] staged cell(s) that no run validated -- an aborted build leaves a partial\n"
           . "       architecture behind. Rebuild the arch, or delete the cell:\n  "
           . join("\n  ", @unvalidated) . "\n" if @unvalidated;
-        # Collect this codename's staged debs across both arches, deduping on binary package
+        # An architecture staged outside $expect still reaches the pool below, but gets no index, so
+        # the gate never reads it. Only an explicit --expect-arch can disagree with staging now, and
+        # a claim that disagrees with the disk is a mistake, not an instruction to ship the surplus.
+        my %want = map { $_ => 1 } @$expect;
+        my @unexpected = grep { !$want{$_} } staged_pool_arches($cn);
+        die "FATAL: [$cn] staged architecture(s) that this publish does not expect ["
+          . join(' ', @$expect) . "] -- their packages would reach the pool with no index and no\n"
+          . "       verification. Name them in --expect-arch, or delete the cell:\n  "
+          . join("\n  ", map { "$staging/$cn/$_" } @unexpected) . "\n" if @unexpected;
+        # Collect this codename's staged debs across every staged arch, deduping on binary package
         # NAME+ARCH: if two files resolve to the same package+arch (e.g. a native ppc genesis and
         # an amd64-host cross-converted one both claiming xcat-genesis-base-ppc64el/all) only ONE
         # may reach the pool. Keep the highest version and warn naming both -- a safety net that
@@ -1556,6 +1575,9 @@ be a space/comma list (C<--expect-arch "amd64 ppc64el">). Used by the gate: an e
 native package is C<MISSING-ARCH>, an unexpected arch that published natives is C<UNEXPECTED-ARCH>,
 and C<Release> advertises exactly this set. Without it the gate falls back to the staged arch set when
 publishing, or to each codename's C<Release> C<Architectures:> when verifying standalone.
+
+Publishing refuses a staged architecture this set omits. Its packages would reach the pool with no
+index, and the gate reads only indexes, so it would ship unverified.
 
 =item B<--verify-repo> C<< =<apt_dir> >>
 

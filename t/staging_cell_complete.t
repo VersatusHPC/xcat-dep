@@ -95,12 +95,11 @@ sub make_tree {
     return $out;
 }
 
-# publish($out): the finalization run. --expect-arch names amd64 only, which is the case the gate
-# cannot cover: no binary-ppc64el index is written, so no index check ever reads that architecture.
+# publish($out, @expect): the finalization run, told which architectures it must serve.
 sub publish {
-    my ($out) = @_;
+    my ($out, @expect) = @_;
     return run_sbuild('--output-root', $out, '--apt-dir', "$out/apt", '--arch', 'amd64',
-                      '--publish', '--expect-arch', 'amd64');
+                      '--publish', map { ('--expect-arch', $_) } @expect);
 }
 
 my $POOLED = 'pool/main/noble/ipmitool-xcat_1_ppc64el.deb';
@@ -108,7 +107,9 @@ my $POOLED = 'pool/main/noble/ipmitool-xcat_1_ppc64el.deb';
 # ---- a cell no run validated must stop the publish ----------------------------------------------
 {
     my $out = make_tree(name => 'unvalidated');
-    my ($rc, $log) = publish($out);
+    # --expect-arch names amd64 only, which is the case the index gate cannot cover: no
+    # binary-ppc64el index is written, so no index check ever reads that architecture.
+    my ($rc, $log) = publish($out, 'amd64');
     isnt($rc, 0, 'a staged cell that no run validated stops the publish');
     like($log, qr{staging/noble/ppc64el},
         '... and the message names the cell to remove or rebuild');
@@ -120,7 +121,9 @@ my $POOLED = 'pool/main/noble/ipmitool-xcat_1_ppc64el.deb';
 # ---- a cell a staging run validated publishes ----------------------------------------------------
 {
     my $out = make_tree(name => 'validated', validate => 1);
-    my ($rc, $log) = publish($out);
+    # Both staged cells are named: a publish that omits one is refused for a different reason
+    # (t/staged_arch_expected.t), and that refusal would hide whether the mark was honoured.
+    my ($rc, $log) = publish($out, 'amd64', 'ppc64el');
     is($rc, 0, 'a validated cell publishes') or diag($log);
     ok(-e "$out/apt/$POOLED",
         '... and its package reaches the published pool');
