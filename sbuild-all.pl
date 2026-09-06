@@ -341,6 +341,12 @@ for my $cn (@dist_list) {
 my $staging = "$output_root/staging";
 unless ($dry_run) { make_path($staging); }
 
+# The assemble phase reads every arch cell it finds, including one another host staged and one an
+# aborted run left half-built. validate_manifest writes this marker into a cell it has just passed,
+# and build_one_codename wipes the cell before it builds -- so the marker is present only while the
+# cell holds a complete, version-pinned set. assemble_into refuses a cell without it.
+my $STAGED_OK = '.staged-complete';
+
 # Fail-fast PER-ARCH run lock. Within ONE pipeline run the amd64 and ppc64el stages run CONCURRENTLY
 # on their own hosts against the SAME --output-root (different arch subdirs), so a single shared lock
 # would wrongly serialize them (or deadlock). Lock per-arch instead: <output_root>/.sbuild-all.<arch>.lock
@@ -724,6 +730,13 @@ sub validate_manifest {
         }
     }
     die "FATAL: manifest validation failed:\n  " . join("\n  ", @fail) . "\n" if @fail;
+    for my $cn (@dist_list) {
+        my $dir = "$staging/$cn/$arch";
+        next unless -d $dir;
+        open my $mk, '>', "$dir/$STAGED_OK" or die "FATAL: cannot mark $dir complete: $!\n";
+        print $mk "run-id=$run_id codename=$cn arch=$arch\n";
+        close $mk;
+    }
     print "  all targets satisfy the manifest (packages present, version pins matched)\n";
 }
 
@@ -1082,6 +1095,13 @@ sub assemble_into {
         # debs from a prior run so the published repo never carries a mixture.
         wipe_tree($pool, "$dir/dists/$cn", "$dir/$ver");
         make_path($pool, "$dir/$ver");
+        # A cell with no marker holds whatever a stopped run happened to finish. Publishing part of
+        # an architecture is worse than publishing none of it, and the gate below cannot catch it:
+        # an arch outside $expect gets no index, and the gate reads only indexes.
+        my @unvalidated = grep { !-e "$_/$STAGED_OK" } grep { -d $_ } glob("$staging/$cn/*");
+        die "FATAL: [$cn] staged cell(s) that no run validated -- an aborted build leaves a partial\n"
+          . "       architecture behind. Rebuild the arch, or delete the cell:\n  "
+          . join("\n  ", @unvalidated) . "\n" if @unvalidated;
         # Collect this codename's staged debs across both arches, deduping on binary package
         # NAME+ARCH: if two files resolve to the same package+arch (e.g. a native ppc genesis and
         # an amd64-host cross-converted one both claiming xcat-genesis-base-ppc64el/all) only ONE
@@ -1378,7 +1398,9 @@ C<--genesis-release>; it is not built here.
 
 =item Validate
 
-Asserts every manifest-required package is present at its pinned version (zero tolerance).
+Asserts every manifest-required package is present at its pinned version (zero tolerance), then
+marks each cell it passed. Publish refuses a staged cell that carries no mark, so a run that stopped
+part way through an architecture stops the next publish instead of shipping what it had finished.
 
 =item Publish (C<--publish>; locked + atomic)
 
