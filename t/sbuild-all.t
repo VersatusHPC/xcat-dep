@@ -17,6 +17,7 @@ use BuildUtils qw(install_deps_packages install_deps_command missing_perl_module
                   verify_repo_packages verify_repo_signature verify_repo_arches
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
+                  supported_arches
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
                   control_field genesis_deb_control
@@ -616,6 +617,70 @@ STUB
         'missing_perl_modules: a loadable module is not reported');
     is_deeply([ missing_perl_modules('No::Such::Module::Here') ], ['No::Such::Module::Here'],
         'missing_perl_modules: an absent module is reported');
+}
+
+# ---- every compiled dep must be buildable on every architecture xcat-dep supports -------------
+# A debian/control that names architectures explicitly silently excludes the ones it omits:
+# debhelper prints "No packages to build. Possible architecture mismatch: <arch>, want: <list>",
+# builds nothing, and the build then dies at ./configure. ipmitool-xcat did exactly that on
+# riscv64. The Architecture:all packages are the single-producer boot components and are excluded
+# here: they are built once on amd64 and never rebuilt per arch.
+{
+    my $root = "$FindBin::Bin/..";
+    for my $pkg (qw(ipmitool conserver goconserver)) {
+        my $ctl = "$root/$pkg/debian/control";
+        SKIP: {
+            skip "$pkg has no debian/control", 1 unless -f $ctl;
+            open my $fh, '<', $ctl or die "read $ctl: $!";
+            local $/; my $text = <$fh>; close $fh;
+            my @arch_lines = ($text =~ /^Architecture:\s*(.+)$/mg);
+            my @explicit = grep { !/^(?:any|all)$/ } map { s/^\s+|\s+$//gr } @arch_lines;
+            my @missing;
+            for my $line (@explicit) {
+                my %have = map { $_ => 1 } split /\s+/, $line;
+                push @missing, grep { !$have{$_} } grep { $_ ne 'amd64' } supported_arches();
+            }
+            is_deeply(\@missing, [],
+                "$pkg/debian/control builds on every supported arch (@{[join ' ', supported_arches()]})");
+        }
+    }
+}
+
+# ---- every non-glob manifest pin must match the package's own debian/changelog --------------
+# debs-manifest.conf pins the exact deb version each package must produce, and the version comes
+# from that package's debian/changelog. Bumping the changelog without the pin does not fail the
+# build -- it fails the manifest VALIDATION, at the end, after every package has been compiled:
+#   FATAL: manifest validation failed:
+#     [noble-amd64] grub2-xcat: built 2.12-2, manifest pins 2.12-1
+# which is a whole build's worth of time to learn about a one-line edit. grub2-xcat drifted exactly
+# that way when the riscv64 UEFI image was added. Globbed pins are deliberate (goconserver's
+# revision is the CD stamp; xcat-genesis-base is not versioned by xcat-dep) and are skipped.
+{
+    my $root = "$FindBin::Bin/..";
+    my %dir_of = (
+        'ipmitool-xcat'  => 'ipmitool',
+        'conserver-xcat' => 'conserver',
+        'syslinux-xcat'  => 'syslinux',
+        'grub2-xcat'     => 'grub2-xcat',
+        'elilo-xcat'     => 'elilo',
+        'xnba-undi'      => 'xnba',
+    );
+    my %manifest = read_manifest("$root/debs-manifest.conf");
+    my %seen;
+    for my $section (sort keys %manifest) {
+        for my $pkg (sort keys %{ $manifest{$section} }) {
+            my $pin = $manifest{$section}{$pkg};
+            next if !defined $pin || $pin =~ /[*?]/;
+            my $dir = $dir_of{$pkg} or next;
+            my $cl  = "$root/$dir/debian/changelog";
+            next unless -f $cl;
+            open my $fh, '<', $cl or next;
+            my $first = <$fh>; close $fh;
+            my ($ver) = $first =~ /^\S+\s+\(([^)]+)\)/;
+            next if $seen{"$pkg=$pin=$ver"}++;
+            is($pin, $ver, "manifest pin $pkg=$pin matches $dir/debian/changelog");
+        }
+    }
 }
 
 done_testing;
