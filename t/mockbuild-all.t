@@ -10,7 +10,9 @@ use lib "$RealBin/..";
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
+use File::Glob qw(bsd_glob);
 use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_modules
+                      install_mock_config
                       required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       rpm_arch rpm_in_cell
                       skipped_builder carry_over_rpms source_package
@@ -733,6 +735,56 @@ my $vercmp = sub {
         'missing_perl_modules: an absent module is reported');
     is_deeply([ missing_perl_modules('Digest::SHA', 'No::Such::Module::Here') ],
         ['No::Such::Module::Here'], '... and only the absent one, from a mixed list');
+}
+
+# ---- install_mock_config: the tree is the source of truth for a shipped mock config ----------
+# /etc/mock is host state no rpm owns, and mockbuild-all.pl put the file there itself. When the
+# tree's copy advances, the host keeps the copy from the revision that installed it, so the build
+# would run against a configuration this tree does not ship. Refresh it, and keep what was there.
+{
+    my $root    = tempdir(CLEANUP => 1);
+    my $src_dir = "$root/tree";
+    my $dst_dir = "$root/etc-mock";
+    make_path($src_dir, $dst_dir);
+
+    my $src = "$src_dir/rocky-10-riscv64-xcat.cfg";
+    my $dst = "$dst_dir/rocky-10-riscv64-xcat.cfg";
+    write_text($src, "config_opts['legal_host_arches'] = ('x86_64',)\n");
+
+    quiet { install_mock_config($src, $dst_dir) };
+    is(read_text($dst), read_text($src), 'install_mock_config: an absent host copy is installed');
+
+    quiet { install_mock_config($src, $dst_dir) };
+    is_deeply([ bsd_glob("$dst_dir/*.bak.*") ], [],
+        'install_mock_config: an identical host copy is left alone, with no backup');
+
+    # the host carries the previous revision of the same file
+    my $stale = "config_opts['legal_host_arches'] = ('x86_64', 'riscv64')\n";
+    write_text($dst, $stale);
+    quiet { install_mock_config($src, $dst_dir) };
+    is(read_text($dst), read_text($src),
+        'install_mock_config: a stale host copy is refreshed from the tree');
+
+    my @bak = bsd_glob("$dst_dir/rocky-10-riscv64-xcat.cfg.bak.*");
+    is(scalar(@bak), 1, 'install_mock_config: the replaced host copy is kept');
+    is(read_text($bak[0]), $stale, 'install_mock_config: the kept copy has the bytes it had');
+}
+
+sub write_text {
+    my ($path, $text) = @_;
+    open(my $fh, '>', $path) or die "write $path: $!";
+    print {$fh} $text;
+    close($fh);
+    return;
+}
+
+sub read_text {
+    my ($path) = @_;
+    open(my $fh, '<', $path) or die "read $path: $!";
+    local $/;
+    my $text = <$fh>;
+    close($fh);
+    return $text;
 }
 
 done_testing;
