@@ -16,6 +16,7 @@ use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell
+                      install_mock_config
                       carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
@@ -1050,23 +1051,13 @@ sub target_profile {
 }
 
 # The forcearch targets are shipped in mock-configs/; mock, and the include('/etc/mock/<cfg>.cfg')
-# overlays of the per-package builders, need them in /etc/mock. Install a missing one; never
-# overwrite one the host already has.
+# overlays of the per-package builders, need them in /etc/mock.
 sub install_mock_cfg {
     my ($cfg) = @_;
     my $src = "$repo_root/mock-configs/$cfg.cfg";
     return if !-f $src;
-    my $dst = "/etc/mock/$cfg.cfg";
-    if (-f $dst) {
-        die "$dst differs from $src: the build would not use the configuration shipped in this"
-          . " tree. Remove or update the host copy (it is never overwritten here) and rerun.\n"
-            if system("cmp -s " . shell_quote($src) . ' ' . shell_quote($dst)) != 0;
-        return;
-    }
-    print "Installing mock config $src -> $dst\n";
     return if $dry_run;
-    copy($src, $dst) or die "Failed to install $src -> $dst: $!\n";
-    chmod 0644, $dst;
+    return install_mock_config($src, '/etc/mock');
 }
 
 # Assemble the built per-target repo into the deployable, signed per-EL layout

@@ -24,6 +24,7 @@ our @EXPORT_OK = qw(
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     build_mock_uniqueext rpm_in_cell
+    install_mock_config
 );
 
 # install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
@@ -721,6 +722,60 @@ sub build_mock_uniqueext {
     $idx = 0 if $idx < 0;
 
     return sprintf("mba-%02d-%s-%s", $idx, $run_part, $label_part);
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 install_mock_config
+
+Descriptions: Put the mock configuration shipped in this tree where mock, and the
+include('/etc/mock/<cfg>.cfg') overlays of the per-package builders, read it. The tree is the
+source of truth: a host copy that differs is a copy from an older revision of the same file, so
+it is replaced. /etc/mock is host state that no rpm owns and that nothing else refreshes, so the
+replaced file is kept beside the new one.
+
+Arguments: $src -- path of the configuration shipped in this tree
+           $dst_dir -- directory mock reads configurations from
+
+Returns: 1 when the destination was written, undef when nothing had to change
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub install_mock_config {
+    my ($src, $dst_dir) = @_;
+    return unless defined $src && -f $src;
+    my $dst = "$dst_dir/" . basename($src);
+
+    if (-f $dst) {
+        return if _same_bytes($src, $dst);
+        my @t = localtime();
+        my $bak = sprintf('%s.bak.%04d%02d%02d%02d%02d%02d',
+                          $dst, $t[5] + 1900, $t[4] + 1, $t[3], $t[2], $t[1], $t[0]);
+        copy($dst, $bak) or die "Failed to keep $dst as $bak: $!\n";
+        print "Refreshing mock config $dst from $src (previous copy kept as $bak)\n";
+    }
+    else {
+        print "Installing mock config $src -> $dst\n";
+    }
+
+    copy($src, $dst) or die "Failed to install $src -> $dst: $!\n";
+    chmod 0644, $dst;
+    return 1;
+}
+
+sub _same_bytes {
+    my ($a, $b) = @_;
+    return 0 if -s $a != -s $b;
+    open(my $fa, '<', $a) or return 0;
+    open(my $fb, '<', $b) or return 0;
+    binmode($fa);
+    binmode($fb);
+    local $/;
+    my $same = <$fa> eq <$fb>;
+    close($fa);
+    close($fb);
+    return $same;
 }
 
 1;
