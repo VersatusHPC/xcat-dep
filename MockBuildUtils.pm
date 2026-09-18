@@ -23,7 +23,7 @@ our @EXPORT_OK = qw(
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-    build_mock_uniqueext rpm_in_cell
+    build_mock_uniqueext rpm_in_cell target_profile
 );
 
 # install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
@@ -721,6 +721,47 @@ sub build_mock_uniqueext {
     $idx = 0 if $idx < 0;
 
     return sprintf("mba-%02d-%s-%s", $idx, $run_part, $label_part);
+}
+
+
+my %forcearch_targets = (
+    'rocky-10-riscv64-xcat' => {
+        rel          => 10,
+        arch         => 'riscv64',
+        # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
+        noarch_cfg   => 'rocky-10-x86_64',
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+    },
+);
+
+# The build profile of a target: EL release, arch of the rpms, where its noarch deps are built,
+# which dep builders run and which rpms the deployed repo must contain.
+sub target_profile {
+    my ($target, $host_arch) = @_;
+    if (my $fa = $forcearch_targets{$target}) {
+        return {
+            %{$fa},
+            forcearch => 1,
+            epel      => 0,
+        };
+    }
+    my ($rel) = $target =~ /epel-(\d+)-/;
+    die "Could not parse EL release from target '$target'\n" unless defined $rel;
+    return {
+        rel          => $rel,
+        arch         => $host_arch,
+        noarch_cfg   => $target,
+        forcearch    => 0,
+        epel         => 1,
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        # xCAT Requires all of these on every arch, and every one of them builds natively on
+        # every arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed
+        # artifacts), so a self-sufficient per-arch build produces the whole set.
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+    };
 }
 
 1;

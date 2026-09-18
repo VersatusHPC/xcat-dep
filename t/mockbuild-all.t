@@ -17,7 +17,7 @@ use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_mo
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
                       parse_evr evr_constraint_ok parse_pin rpmkeys_checksig_problem
-                      bump_dep_release_suffix build_mock_uniqueext);
+                      bump_dep_release_suffix build_mock_uniqueext target_profile);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
 sub quiet(&) {
@@ -733,6 +733,44 @@ my $vercmp = sub {
         'missing_perl_modules: an absent module is reported');
     is_deeply([ missing_perl_modules('Digest::SHA', 'No::Such::Module::Here') ],
         ['No::Such::Module::Here'], '... and only the absent one, from a mixed list');
+}
+
+
+# ---- target_profile: every family a pipeline builds resolves to its own deploy directory -------
+# mockbuild-all.pl derives the deploy subdir and the arch from the target NAME. xcat-dep-suse-cd
+# asks for opensuse-leap-<ver>-<arch>; when that name resolves to nothing the target dies before
+# the first mock runs, with "Could not parse EL release from target ...".
+{
+    my $el = target_profile('alma+epel-10-x86_64', 'x86_64');
+    is($el->{family},    'el',     'EL target is the el family');
+    is($el->{osdir},     'rh10',   '... deploys under rh10');
+    is($el->{arch},      'x86_64', '... builds for the host arch');
+    is($el->{forcearch}, 0,        '... is not cross-built');
+
+    my $rv = target_profile('rocky-10-riscv64-xcat', 'x86_64');
+    is($rv->{family},    'el',       'riscv64 target is the el family');
+    is($rv->{osdir},     'rh10',     '... deploys under rh10');
+    is($rv->{arch},      'riscv64',  '... builds riscv64 rpms');
+    is($rv->{forcearch}, 1,          '... is cross-built');
+
+    for my $c (['opensuse-leap-15.6-x86_64', 'x86_64', 'sles15'],
+               ['opensuse-leap-15.6-ppc64le', 'ppc64le', 'sles15'],
+               ['opensuse-leap-16.0-x86_64', 'x86_64', 'sles16']) {
+        my ($t, $ha, $osdir) = @{$c};
+        my $p = eval { target_profile($t, $ha) };
+        my $err = $@;
+        ok(defined $p, "$t resolves to a profile") or diag($err);
+        is(($p || {})->{family},     'suse', "... $t is the suse family");
+        is(($p || {})->{osdir},      $osdir, "... $t deploys under $osdir");
+        is(($p || {})->{arch},       $ha,    "... $t builds for the host arch");
+        is(($p || {})->{noarch_cfg}, $t,     "... $t builds its noarch deps in its own chroot");
+        is(($p || {})->{forcearch},  0,      "... $t is not cross-built");
+    }
+
+    # An unrecognised target must die rather than resolve to a silent EL default: a wrong
+    # deploy directory publishes one family's rpms into another family's repo.
+    my $bogus = eval { target_profile('debian-13-amd64', 'x86_64') };
+    ok(!defined $bogus, 'an unrecognised target dies instead of guessing a deploy directory');
 }
 
 done_testing;

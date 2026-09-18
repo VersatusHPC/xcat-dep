@@ -406,17 +406,6 @@ my @build_targets = $target
 # (mockbuild-perl-packages.pl --epel-gap), and the noarch deps, the x86 boot loaders among them,
 # are built in the native, EPEL-free chroot of the same release (the rpms are identical for
 # every arch and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
-my %forcearch_targets = (
-    'rocky-10-riscv64-xcat' => {
-        rel          => 10,
-        arch         => 'riscv64',
-        # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
-        noarch_cfg   => 'rocky-10-x86_64',
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
-                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
-    },
-);
 
 # NOTE: no dhcp- packages are built here. DHCP backend selection is an install-time
 # rich dep in xCAT.spec (kea if system-release>=10 else /usr/sbin/dhcpd), so there is
@@ -506,7 +495,7 @@ sub build_one_target {
     # different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
     # cross-contaminate. Fold the target into run_id so each target gets its own tree.
     $run_id = "$target-$run_id" unless index($run_id, $target) >= 0;
-    my $profile = target_profile($target);
+    my $profile = target_profile($target, $host_arch);
     my $rel = $profile->{rel};
     $arch = $profile->{arch};
 
@@ -1021,33 +1010,6 @@ print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
     return { repo_dir => $repo_dir, rel => $rel, profile => $profile };
 }
 
-# The build profile of a target: EL release, arch of the rpms, where its noarch deps are built,
-# which dep builders run and which rpms the deployed repo must contain.
-sub target_profile {
-    my ($target) = @_;
-    if (my $fa = $forcearch_targets{$target}) {
-        return {
-            %{$fa},
-            forcearch => 1,
-            epel      => 0,
-        };
-    }
-    my ($rel) = $target =~ /epel-(\d+)-/;
-    die "Could not parse EL release from target '$target'\n" unless defined $rel;
-    return {
-        rel          => $rel,
-        arch         => $host_arch,
-        noarch_cfg   => $target,
-        forcearch    => 0,
-        epel         => 1,
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
-        # xCAT Requires all of these on every arch, and every one of them builds natively on
-        # every arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed
-        # artifacts), so a self-sufficient per-arch build produces the whole set.
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
-                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
-    };
-}
 
 # The forcearch targets are shipped in mock-configs/; mock, and the include('/etc/mock/<cfg>.cfg')
 # overlays of the per-package builders, need them in /etc/mock. Install a missing one; never
