@@ -38,6 +38,11 @@ Source4: elilo-xcat-3.14-6.noarch.rpm
 %if 0%{?rhel} == 8
 %global use_prebuilt 1
 %endif
+# Leap/SLE ship gnu-efi without the -devel subpackage elilo's Makefile needs, so SUSE takes the
+# same tracked prebuilt as EL8. The artifact is noarch-identical either way.
+%if 0%{?suse_version}
+%global use_prebuilt 1
+%endif
 BuildRequires: gcc
 BuildRequires: make
 BuildRequires: cpio
