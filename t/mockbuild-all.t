@@ -636,13 +636,20 @@ for my $case (
     ['/repo/rh9/s390x/', 'alma+epel-9-s390x'],
     ['/repo/rh10/ppc64le//', 'alma+epel-10-ppc64le'],
     ['/repo/rh10/riscv64', 'alma+epel-10-riscv64'],
+    # A SUSE cell resolves to the Leap chroot that builds it. Without this the post-build gate and
+    # --verify-repo are handed a sles15 directory, derive nothing, and the cell publishes unverified.
+    ['/repo/sles15/x86_64', 'opensuse-leap-15.6-x86_64'],
+    ['/repo/sles15/ppc64le/', 'opensuse-leap-15.6-ppc64le'],
 ) {
     my ($path, $target) = @$case;
     is(derive_target_from_repo_path($path), $target, "$path selects $target");
 }
 is(derive_target_from_repo_path(undef), undef, 'missing path has no target');
 is(derive_target_from_repo_path(''), undef, 'empty path has no target');
-for my $path ('/repo', '/repo/rh10', '/repo/rh10/x86_64/repodata', '/repo/notrh10/x86_64') {
+for my $path ('/repo', '/repo/rh10', '/repo/rh10/x86_64/repodata', '/repo/notrh10/x86_64',
+              # sles12 has no buildable chroot. It must resolve to nothing: a guess here would
+              # verify one release's cell against another release's manifest section.
+              '/repo/sles12/x86_64') {
     is(derive_target_from_repo_path($path), undef, "$path has no target");
 }
 

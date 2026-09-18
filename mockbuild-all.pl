@@ -297,7 +297,9 @@ if ($finalize_xcat_dep) {
     unless ($no_verify_repo) {
         my %seen;
         for my $root ($x86, $ppc) {
-            my @cells = map { glob("$root/rh*/$_") } @finalize_arch;
+            # rh* and sles* both: a SUSE cell left out here is deployed and never gated,
+            # so it can publish a missing or unsigned package in silence.
+            my @cells = map { (glob("$root/rh*/$_"), glob("$root/sles*/$_")) } @finalize_arch;
             for my $d (sort @cells) {
                 next unless -d $d;
                 my $abs = abs_path($d);
