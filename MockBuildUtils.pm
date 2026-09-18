@@ -743,14 +743,37 @@ sub target_profile {
     if (my $fa = $forcearch_targets{$target}) {
         return {
             %{$fa},
+            family    => 'el',
+            osdir     => "rh$fa->{rel}",
             forcearch => 1,
             epel      => 0,
         };
     }
+    # SUSE: one openSUSE Leap mock target per arch. Leap <major> and SLE <major> share a
+    # package set, and xcat.org has published the deps as sles<major> since 2.10, so the
+    # deploy directory drops the minor. The core is NOT built here: xCAT installs the same
+    # flat rpms on SUSE as on EL, because its dependencies resolve at install time.
+    if (my ($smaj) = $target =~ /^opensuse-leap-(\d+)\.\d+-/) {
+        return {
+            rel          => $smaj,
+            family       => 'suse',
+            osdir        => "sles$smaj",
+            arch         => $host_arch,
+            noarch_cfg   => $target,
+            forcearch    => 0,
+            # Leap carries no EPEL, so the perl deps EPEL would supply are built here.
+            epel         => 0,
+            dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                                perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        };
+    }
     my ($rel) = $target =~ /epel-(\d+)-/;
-    die "Could not parse EL release from target '$target'\n" unless defined $rel;
+    die "Could not parse a release from target '$target'\n" unless defined $rel;
     return {
         rel          => $rel,
+        family       => 'el',
+        osdir        => "rh$rel",
         arch         => $host_arch,
         noarch_cfg   => $target,
         forcearch    => 0,
