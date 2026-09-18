@@ -301,6 +301,15 @@ sub parse_pin {
     return ('version');
 }
 
+# The mock target that builds each SUSE deploy directory. A deploy directory does not name the
+# chroot that builds it, so this needs a table rather than a pattern: mock-core-configs ships no
+# SLE config, because SLE repositories need a subscription, and Leap 15.6 shares SLE 15 SP6's
+# package base. sles12 is absent on purpose -- it has no buildable chroot, so it must resolve to
+# nothing rather than to a wrong target, which would publish one release's rpms as another's.
+my %SUSE_BUILD_TARGET = (
+    sles15 => 'opensuse-leap-15.6',
+);
+
 sub derive_target_from_repo_path {
     my ($dir) = @_;
     my $tgt;
@@ -308,6 +317,10 @@ sub derive_target_from_repo_path {
     $tgt = "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
     if ($dir =~ m{/openeuler((?:20|22|24)\.03(?:sp[1-9][0-9]*)?)/(x86_64|ppc64le)/*$}) {
         $tgt = "openeuler-$1-$2";
+    }
+    if ($dir =~ m{/(sles\d+)/([^/]+)/*$}) {
+        my $base = $SUSE_BUILD_TARGET{$1};
+        $tgt = "$base-$2" if $base;
     }
     return $tgt;
 }
