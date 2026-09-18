@@ -272,7 +272,8 @@ if ($finalize_xcat_dep) {
     unless ($no_verify_repo) {
         my %seen;
         for my $root ($x86, $ppc) {
-            my @cells = (glob("$root/rh*/x86_64"), glob("$root/rh*/ppc64le"));
+            my @cells = (glob("$root/rh*/x86_64"),   glob("$root/rh*/ppc64le"),
+                             glob("$root/sles*/x86_64"), glob("$root/sles*/ppc64le"));
             for my $d (sort @cells) {
                 next unless -d $d;
                 my $abs = abs_path($d);
@@ -1900,14 +1901,6 @@ sub verify_target_repo {
 # derive_target_from_repo_path: map a deployed per-target repo path .../rh<N>/<arch> to its manifest
 # target section name alma+epel-<N>-<arch>. Returns undef when the path lacks that rh<N>/<arch> tail,
 # so the standalone --verify-repo mode can require an explicit --target instead.
-sub derive_target_from_repo_path {
-    my ($dir) = @_;
-    my $tgt;
-    return $tgt unless defined $dir;
-    $tgt = "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
-    return $tgt;
-}
-
 sub reset_staging_repo {
     my ($directory) = @_;
     return unless -d $directory;

@@ -23,7 +23,7 @@ our @EXPORT_OK = qw(
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-    build_mock_uniqueext rpm_in_cell target_profile
+    build_mock_uniqueext rpm_in_cell target_profile derive_target_from_repo_path
 );
 
 # install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
@@ -786,5 +786,28 @@ sub target_profile {
                             perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     };
 }
+
+
+# The mock target that builds each SUSE deploy directory. Leap <major>.<minor> is the only
+# buildable SUSE chroot -- mock-core-configs ships no SLE config, because SLE repos need a
+# subscription -- and Leap 15.6 shares SLE 15 SP6's package base, which is why xcat.org has
+# published these rpms as sles15 since 2.10.
+my %suse_build_target = (
+    sles15 => 'opensuse-leap-15.6',
+);
+
+# Map a deployed per-target repo path to the manifest target that built it, so the completeness
+# gate can check a cell it is handed by path alone.
+sub derive_target_from_repo_path {
+    my ($dir) = @_;
+    return undef unless defined $dir;
+    return "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
+    if ($dir =~ m{/(sles\d+)/([^/]+)/*$}) {
+        my $base = $suse_build_target{$1} or return undef;
+        return "$base-$2";
+    }
+    return undef;
+}
+
 
 1;

@@ -17,7 +17,8 @@ use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_mo
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
                       parse_evr evr_constraint_ok parse_pin rpmkeys_checksig_problem
-                      bump_dep_release_suffix build_mock_uniqueext target_profile);
+                      bump_dep_release_suffix build_mock_uniqueext target_profile
+                      derive_target_from_repo_path);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
 sub quiet(&) {
@@ -771,6 +772,25 @@ my $vercmp = sub {
     # deploy directory publishes one family's rpms into another family's repo.
     my $bogus = eval { target_profile('debian-13-amd64', 'x86_64') };
     ok(!defined $bogus, 'an unrecognised target dies instead of guessing a deploy directory');
+}
+
+
+# ---- derive_target_from_repo_path: the completeness gate must identify a cell by its path -------
+# The post-build gate and --verify-repo are handed a deployed cell directory and must work out
+# which manifest section built it. A SUSE cell that resolves to nothing is published unverified.
+{
+    is(derive_target_from_repo_path('/b/xcat-dep/rh10/x86_64'), 'alma+epel-10-x86_64',
+        'an EL cell resolves to its manifest target');
+    is(derive_target_from_repo_path('/b/xcat-dep/rh9/ppc64le'), 'alma+epel-9-ppc64le',
+        '... on either arch');
+    is(derive_target_from_repo_path('/b/xcat-dep/sles15/x86_64'), 'opensuse-leap-15.6-x86_64',
+        'a SUSE cell resolves to the Leap chroot that builds it');
+    is(derive_target_from_repo_path('/b/xcat-dep/sles15/ppc64le'), 'opensuse-leap-15.6-ppc64le',
+        '... on either arch');
+    is(derive_target_from_repo_path('/b/xcat-dep/sles12/x86_64'), undef,
+        'a SUSE directory with no buildable chroot resolves to nothing, not to a wrong target');
+    is(derive_target_from_repo_path('/b/xcat-dep/common'), undef,
+        'a non-cell path resolves to nothing');
 }
 
 done_testing;
