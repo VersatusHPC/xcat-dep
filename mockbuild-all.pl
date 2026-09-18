@@ -21,7 +21,8 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_c
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-                      build_mock_uniqueext rpmkeys_checksig_problem);
+                      build_mock_uniqueext rpmkeys_checksig_problem
+                      target_profile derive_target_from_repo_path);
 # print_step and sh_quote come from MockBuildUtils above; XCAT::BuildUtils carries the same
 # print_step, so it is deliberately NOT imported here (one definition, no redefinition warning).
 use XCAT::BuildUtils qw(
