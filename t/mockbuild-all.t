@@ -784,6 +784,27 @@ my $vercmp = sub {
         ok($b15{'goconserver'},   'Leap 15 still builds goconserver');
     }
 
+    # The SLE 12 family reads repository metadata with zypper 1.13 / libsolv 0.6, which predate
+    # zstd. createrepo_c writes zstd by default, and that repository cannot be installed from at
+    # all there: it retrieves and then fails with "Failed to cache repo (4)".
+    # createrepo_c_cmd lives in the script, so extract it and drive it rather than matching text.
+    {
+        my $mba = "$FindBin::Bin/../mockbuild-all.pl";
+        $mba = 'mockbuild-all.pl' unless -f $mba;
+        my $src = do { open my $fh, '<', $mba or die "cannot read $mba: $!"; local $/; <$fh> };
+        my ($sub) = $src =~ /(sub createrepo_c_cmd \{.*?\n\})/s
+            or die "createrepo_c_cmd is not in mockbuild-all.pl -- it was renamed or inlined";
+        eval "package R; sub shell_quote { \"'\$_[0]'\" } our \$SOURCE_DATE_EPOCH = 1; $sub; 1"
+            or die "cannot load createrepo_c_cmd: $@";
+
+        like(R::createrepo_c_cmd('/tmp/x', target_profile('opensuse-leap-42.3-x86_64', 'x86_64')),
+             qr/--compress-type gz/, 'the SLE 12 cell indexes with gzip metadata');
+        unlike(R::createrepo_c_cmd('/tmp/x', target_profile('opensuse-leap-15.6-x86_64', 'x86_64')),
+               qr/--compress-type/, 'Leap 15 keeps the default metadata');
+        unlike(R::createrepo_c_cmd('/tmp/x', target_profile('alma+epel-10-x86_64', 'x86_64')),
+               qr/--compress-type/, '... and so does EL');
+    }
+
     # An unrecognised target must die rather than resolve to a silent EL default: a wrong
     # deploy directory publishes one family's rpms into another family's repo.
     my $bogus = eval { target_profile('debian-13-amd64', 'x86_64') };

@@ -938,12 +938,12 @@ if (!$dry_run && $copied_srpms == 0) {
 if (!$skip_createrepo) {
     run_step(
         step => 'Run createrepo',
-        cmd  => createrepo_c_cmd($repo_dir),
+        cmd  => createrepo_c_cmd($repo_dir, $profile),
         log  => "$log_root/createrepo.log",
     );
     run_step(
         step => 'Run createrepo for SRPM repo',
-        cmd  => createrepo_c_cmd($srpm_repo_dir),
+        cmd  => createrepo_c_cmd($srpm_repo_dir, $profile),
         log  => "$log_root/createrepo-srpm.log",
     );
 }
@@ -1070,7 +1070,7 @@ sub deploy_target {
         # rpm an earlier layout left in the collection. On the STAGE, so the published cell is
         # already correct when it is swapped in.
         remove_genesis_packages($stage, 0) if $genesis_release;
-        sign_and_index_repo($stage);
+        sign_and_index_repo($stage, $info->{profile});
         write_dep_repo_metadata($stage, $osdir, $tarch);
         # Automatic completeness + signature gate on the freshly signed cell -- the single
         # consolidated gate (verify_target_repo, the same one --verify-repo runs). Asserts every
@@ -1228,14 +1228,21 @@ sub publish_file {
 # defaults emit primary/filelists/other as *.xml.zst plus *.sqlite.bz2 (--database),
 # exactly the upstream shape; --set-timestamp-to-revision pins repomd to SOURCE_DATE_EPOCH.
 sub createrepo_c_cmd {
-    my ($dir) = @_;
+    my ($dir, $profile) = @_;
+    # The SLE 12 family reads this metadata with zypper 1.13 and libsolv 0.6, which predate
+    # zstd: they retrieve the repository and then fail with "Failed to cache repo (4)", so a
+    # repository built with current tooling cannot be installed from at all on that family.
+    # gzip is what they understand, and every newer reader still does.
+    my $gz = ($profile && ($profile->{family} // '') eq 'suse' && ($profile->{rel} // 99) < 15)
+           ? '--compress-type gz --general-compress-type gz ' : '';
     return 'createrepo_c --update --database '
+        . $gz
         . '--revision ' . shell_quote($SOURCE_DATE_EPOCH) . ' --set-timestamp-to-revision '
         . shell_quote($dir);
 }
 
 sub sign_and_index_repo {
-    my ($dir) = @_;
+    my ($dir, $profile) = @_;
     my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
     if ($gpg_sign && @rpms) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
@@ -1243,7 +1250,7 @@ sub sign_and_index_repo {
             . ' --define ' . shell_quote("%__gpg $gpg_program") . ' --addsign '
             . join(' ', map { shell_quote($_) } @rpms));
     }
-    run_simple(createrepo_c_cmd($dir));
+    run_simple(createrepo_c_cmd($dir, $profile));
     if ($gpg_sign) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
@@ -1357,8 +1364,8 @@ EOF
 # re-export repomd. Does NOT re-sign the rpms (cross_copy_genesis already did the copied
 # one; the rest keep their build-time signatures).
 sub reindex_and_sign_repo {
-    my ($dir) = @_;
-    run_simple(createrepo_c_cmd($dir));
+    my ($dir, $profile) = @_;
+    run_simple(createrepo_c_cmd($dir, $profile));
     if ($gpg_sign) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
