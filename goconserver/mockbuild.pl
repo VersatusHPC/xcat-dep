@@ -201,6 +201,10 @@ Name:           goconserver
 Version:        $version
 Release:        4.el$rel$release_suffix
 Summary:        Console server written in Go for xCAT
+# xCAT requires a console backend but cannot name one: rpm 4.11 on the SLE 12 family rejects a
+# boolean dependency ("Dependency tokens must begin with alpha-numeric, '_' or '/'"), so both
+# backends declare this capability and xCAT requires the capability.
+Provides:       xcat-console-backend
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver
 BuildArch:      $arch
@@ -366,6 +370,10 @@ Name:           goconserver
 Version:        $version
 Release:        4.el$rel$release_suffix
 Summary:        Console server written in Go for xCAT
+# xCAT requires a console backend but cannot name one: rpm 4.11 on the SLE 12 family rejects a
+# boolean dependency ("Dependency tokens must begin with alpha-numeric, '_' or '/'"), so both
+# backends declare this capability and xCAT requires the capability.
+Provides:       xcat-console-backend
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver
 

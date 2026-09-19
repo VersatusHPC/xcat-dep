@@ -1,3 +1,6 @@
+# NOTHING BUILDS THIS FILE. goconserver/mockbuild.pl generates the real spec, in two heredocs,
+# and that is where a dependency or a capability has to go. A change made here reaches no rpm:
+# the console-backend capability was added here first and the built package never carried it.
 Summary: A dummy package.
 Name: goconserver
 # xCAT requires a console backend but cannot name one: goconserver needs a Go toolchain the SLE
