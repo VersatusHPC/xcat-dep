@@ -753,7 +753,10 @@ sub target_profile {
     # package set, and xcat.org has published the deps as sles<major> since 2.10, so the
     # deploy directory drops the minor. The core is NOT built here: xCAT installs the same
     # flat rpms on SUSE as on EL, because its dependencies resolve at install time.
-    if (my ($smaj) = $target =~ /^opensuse-leap-(\d+)\.\d+-/) {
+    # SLE 12 has no Leap counterpart: openSUSE 42.x is long dead and publishes no chroot, so
+    # that cell builds in a chroot made from the SLE 12 SP5 media and its target is named
+    # after that media. Both names carry the major version, which is the deploy directory.
+    if (my ($smaj) = $target =~ /^(?:opensuse-leap|sles)-(\d+)\.\d+-/) {
         return {
             rel          => $smaj,
             family       => 'suse',
@@ -794,6 +797,7 @@ sub target_profile {
 # published these rpms as sles15 since 2.10.
 my %suse_build_target = (
     sles15 => 'opensuse-leap-15.6',
+    sles12 => 'sles-12.5',
 );
 
 # Map a deployed per-target repo path to the manifest target that built it, so the completeness
