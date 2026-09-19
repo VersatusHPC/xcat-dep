@@ -771,6 +771,18 @@ my $vercmp = sub {
         is(($p || {})->{forcearch},  0,      "... $t is not cross-built");
     }
 
+    # SLE 12 has no Go toolchain new enough for goconserver (go.mod asks for 1.25), so that cell
+    # builds conserver-xcat instead. xCAT chooses the backend at run time.
+    {
+        my $s12 = target_profile('sles-12.5-x86_64', 'x86_64');
+        my %b12 = map { $_ => 1 } @{ $s12->{dep_builders} };
+        ok(!$b12{'goconserver'},  'SLE 12 does not build goconserver');
+        ok($b12{'conserver-xcat'}, '... it builds conserver-xcat as the console backend');
+        my $s15 = target_profile('opensuse-leap-15.6-x86_64', 'x86_64');
+        my %b15 = map { $_ => 1 } @{ $s15->{dep_builders} };
+        ok($b15{'goconserver'},   'Leap 15 still builds goconserver');
+    }
+
     # An unrecognised target must die rather than resolve to a silent EL default: a wrong
     # deploy directory publishes one family's rpms into another family's repo.
     my $bogus = eval { target_profile('debian-13-amd64', 'x86_64') };

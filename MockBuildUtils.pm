@@ -766,7 +766,12 @@ sub target_profile {
             forcearch    => 0,
             # Leap carries no EPEL, so the perl deps EPEL would supply are built here.
             epel         => 0,
-            dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+            # goconserver needs a Go toolchain that SLE 12 never had: its go.mod asks for Go
+            # 1.25 and the newest Go for SLE 12 is far older. conserver-xcat is the other
+            # console backend, it is C, and it builds there. xCAT picks the backend at run
+            # time -- makegocons when /usr/bin/goconserver exists, makeconservercf otherwise.
+            dep_builders => [ grep { !($smaj == 12 && $_ eq 'goconserver') }
+                              qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi) ],
             required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
                                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
         };
