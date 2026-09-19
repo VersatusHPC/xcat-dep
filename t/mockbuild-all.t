@@ -754,9 +754,12 @@ my $vercmp = sub {
     is($rv->{arch},      'riscv64',  '... builds riscv64 rpms');
     is($rv->{forcearch}, 1,          '... is cross-built');
 
+    # SLE 12 has no Leap counterpart, so its chroot is built from the SLE 12 SP5 media and the
+    # target is named after that media, not after a Leap version.
     for my $c (['opensuse-leap-15.6-x86_64', 'x86_64', 'sles15'],
                ['opensuse-leap-15.6-ppc64le', 'ppc64le', 'sles15'],
-               ['opensuse-leap-16.0-x86_64', 'x86_64', 'sles16']) {
+               ['opensuse-leap-16.0-x86_64', 'x86_64', 'sles16'],
+               ['sles-12.5-x86_64', 'x86_64', 'sles12']) {
         my ($t, $ha, $osdir) = @{$c};
         my $p = eval { target_profile($t, $ha) };
         my $err = $@;
@@ -787,7 +790,9 @@ my $vercmp = sub {
         'a SUSE cell resolves to the Leap chroot that builds it');
     is(derive_target_from_repo_path('/b/xcat-dep/sles15/ppc64le'), 'opensuse-leap-15.6-ppc64le',
         '... on either arch');
-    is(derive_target_from_repo_path('/b/xcat-dep/sles12/x86_64'), undef,
+    is(derive_target_from_repo_path('/b/xcat-dep/sles12/x86_64'), 'sles-12.5-x86_64',
+        'an SLE 12 cell resolves to the chroot built from the SLE 12 SP5 media');
+    is(derive_target_from_repo_path('/b/xcat-dep/sles13/x86_64'), undef,
         'a SUSE directory with no buildable chroot resolves to nothing, not to a wrong target');
     is(derive_target_from_repo_path('/b/xcat-dep/common'), undef,
         'a non-cell path resolves to nothing');
