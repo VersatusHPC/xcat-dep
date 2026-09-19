@@ -992,6 +992,13 @@ BuildArch:      noarch
 Provides:       perl-generators
 Provides:       perl-interpreter
 Provides:       perl-devel
+# SLE 12 ships perl 5.18, whose ExtUtils::MakeMaker is 6.66 and which carries no
+# Pod::Coverage. The Fedora source rpms floor those at 6.76 and 0.18 as a packaging
+# convention: MakeMaker 6.66 builds these modules, and Pod::Coverage is used only by
+# author tests that the build does not run. Leap already exceeds both floors, so this
+# changes nothing there.
+Provides:       perl(ExtUtils::MakeMaker) = 6.76
+Provides:       perl(Pod::Coverage) = 0.18
 Requires:       perl
 %description
 Satisfies the perl-generators / perl-interpreter / perl-devel BuildRequires of
