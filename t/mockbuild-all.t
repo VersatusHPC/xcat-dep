@@ -754,12 +754,12 @@ my $vercmp = sub {
     is($rv->{arch},      'riscv64',  '... builds riscv64 rpms');
     is($rv->{forcearch}, 1,          '... is cross-built');
 
-    # SLE 12 has no Leap counterpart, so its chroot is built from the SLE 12 SP5 media and the
-    # target is named after that media, not after a Leap version.
+    # The SLE 12 family is built in an openSUSE Leap 42.3 chroot, so its target carries the Leap
+    # version while its deploy directory carries the SLE one.
     for my $c (['opensuse-leap-15.6-x86_64', 'x86_64', 'sles15'],
                ['opensuse-leap-15.6-ppc64le', 'ppc64le', 'sles15'],
                ['opensuse-leap-16.0-x86_64', 'x86_64', 'sles16'],
-               ['sles-12.5-x86_64', 'x86_64', 'sles12']) {
+               ['opensuse-leap-42.3-x86_64', 'x86_64', 'sles12']) {
         my ($t, $ha, $osdir) = @{$c};
         my $p = eval { target_profile($t, $ha) };
         my $err = $@;
@@ -771,10 +771,11 @@ my $vercmp = sub {
         is(($p || {})->{forcearch},  0,      "... $t is not cross-built");
     }
 
-    # SLE 12 has no Go toolchain new enough for goconserver (go.mod asks for 1.25), so that cell
+    # Leap 42.3 has no Go new enough for goconserver (go.mod asks for 1.25, 42.3 tops out at 1.11),
+    # so that cell
     # builds conserver-xcat instead. xCAT chooses the backend at run time.
     {
-        my $s12 = target_profile('sles-12.5-x86_64', 'x86_64');
+        my $s12 = target_profile('opensuse-leap-42.3-x86_64', 'x86_64');
         my %b12 = map { $_ => 1 } @{ $s12->{dep_builders} };
         ok(!$b12{'goconserver'},  'SLE 12 does not build goconserver');
         ok($b12{'conserver-xcat'}, '... it builds conserver-xcat as the console backend');
@@ -802,8 +803,8 @@ my $vercmp = sub {
         'a SUSE cell resolves to the Leap chroot that builds it');
     is(derive_target_from_repo_path('/b/xcat-dep/sles15/ppc64le'), 'opensuse-leap-15.6-ppc64le',
         '... on either arch');
-    is(derive_target_from_repo_path('/b/xcat-dep/sles12/x86_64'), 'sles-12.5-x86_64',
-        'an SLE 12 cell resolves to the chroot built from the SLE 12 SP5 media');
+    is(derive_target_from_repo_path('/b/xcat-dep/sles12/x86_64'), 'opensuse-leap-42.3-x86_64',
+        'an SLE 12 cell resolves to the Leap 42.3 chroot that builds it');
     is(derive_target_from_repo_path('/b/xcat-dep/sles13/x86_64'), undef,
         'a SUSE directory with no buildable chroot resolves to nothing, not to a wrong target');
     is(derive_target_from_repo_path('/b/xcat-dep/common'), undef,

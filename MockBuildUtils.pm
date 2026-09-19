@@ -757,10 +757,13 @@ sub target_profile {
     # that cell builds in a chroot made from the SLE 12 SP5 media and its target is named
     # after that media. Both names carry the major version, which is the deploy directory.
     if (my ($smaj) = $target =~ /^(?:opensuse-leap|sles)-(\d+)\.\d+-/) {
+        # Leap 42.x is the openSUSE build of the SLE 12 family, so it deploys to sles12, not
+        # sles42. Every other Leap major is numbered like the SLE major it serves.
+        my $sles = $smaj == 42 ? 12 : $smaj;
         return {
-            rel          => $smaj,
+            rel          => $sles,
             family       => 'suse',
-            osdir        => "sles$smaj",
+            osdir        => "sles$sles",
             arch         => $host_arch,
             noarch_cfg   => $target,
             forcearch    => 0,
@@ -770,7 +773,7 @@ sub target_profile {
             # 1.25 and the newest Go for SLE 12 is far older. conserver-xcat is the other
             # console backend, it is C, and it builds there. xCAT picks the backend at run
             # time -- makegocons when /usr/bin/goconserver exists, makeconservercf otherwise.
-            dep_builders => [ grep { !($smaj == 12 && $_ eq 'goconserver') }
+            dep_builders => [ grep { !($sles == 12 && $_ eq 'goconserver') }
                               qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi) ],
             required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
                                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
@@ -802,7 +805,7 @@ sub target_profile {
 # published these rpms as sles15 since 2.10.
 my %suse_build_target = (
     sles15 => 'opensuse-leap-15.6',
-    sles12 => 'sles-12.5',
+    sles12 => 'opensuse-leap-42.3',
 );
 
 # Map a deployed per-target repo path to the manifest target that built it, so the completeness
