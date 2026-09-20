@@ -11,7 +11,7 @@
 # hostname (console)
 %define master console
 
-%define distver 1
+%define distver 2
 
 Summary: Serial console server daemon/client
 Name: %{pkg}-xcat

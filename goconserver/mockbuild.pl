@@ -199,7 +199,7 @@ write_file($spec_file, <<"SPEC");
 %global debug_package %{nil}
 Name:           goconserver
 Version:        $version
-Release:        4.el$rel$release_suffix
+Release:        5.el$rel$release_suffix
 Summary:        Console server written in Go for xCAT
 # xCAT requires a console backend but cannot name one: rpm 4.11 on the SLE 12 family rejects a
 # boolean dependency ("Dependency tokens must begin with alpha-numeric, '_' or '/'"), so both
@@ -368,7 +368,7 @@ sub cross_build_and_package {
 %global debug_package %{nil}
 Name:           goconserver
 Version:        $version
-Release:        4.el$rel$release_suffix
+Release:        5.el$rel$release_suffix
 Summary:        Console server written in Go for xCAT
 # xCAT requires a console backend but cannot name one: rpm 4.11 on the SLE 12 family rejects a
 # boolean dependency ("Dependency tokens must begin with alpha-numeric, '_' or '/'"), so both
