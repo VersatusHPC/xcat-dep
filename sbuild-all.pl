@@ -1168,17 +1168,28 @@ sub install_genesis_release_debs {
 #---------------------------------------------------------------------------------------------------
 sub build_genesis_release {
     my ($destination) = @_;
+    require XCAT::BuildUtils;
     my $builder = "$script_dir/genesis-openembedded/build";
     die "FATAL: Genesis release builder not found: $builder\n" unless -x $builder;
     if (-f "$destination/release.manifest") {
-        print "  [genesis] release already built for this source: $destination\n";
+        # Skipping is only correct when the release there came from THIS xcat-core commit. The
+        # release identity is a pure function of that commit, so a directory built from another one
+        # is a stale release, and reusing it silently is the defect this option exists to remove:
+        # the channel sat on a 2026-08-25 set for a month because nothing compared the two.
+        my $head = XCAT::BuildUtils::capture_command('git', '-C', $xcat_src, 'rev-parse', 'HEAD');
+        my ($found) = (XCAT::BuildUtils::read_binary("$destination/release.manifest")
+                       =~ /^xcat_revision=(\S+)$/m);
+        die "FATAL: $destination holds a release built from "
+          . (defined($found) ? $found : 'an unrecorded commit')
+          . ", not from $head\n"
+          unless defined($found) && $found eq $head;
+        print "  [genesis] release already built for $head: $destination\n";
         return;
     }
     my @command = ($builder, '--xcat-source', $xcat_src, '--all', '--format', 'deb');
     push(@command, '--work-dir', $genesis_work_dir) if $genesis_work_dir ne '';
     push(@command, '--output-dir', $destination);
     print_step("Build OpenEmbedded Genesis release -> $destination");
-    require XCAT::BuildUtils;
     XCAT::BuildUtils::run_command(@command);
     return;
 }

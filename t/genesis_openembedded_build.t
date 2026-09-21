@@ -212,6 +212,7 @@ local $ENV{PERL5LIB} = join(':', @perl_lib);
 our $FILLER = filler_rpm("$tmp/filler");
 our $ROOT = scratch_manifest("$tmp/repo-root", 'alma+epel-10-x86_64');
 my $source = fake_xcat_source("$tmp/xcat-core");
+our $L_SOURCE = $source;
 cmp_ok(scalar(@arches), '>=', 8, 'a complete release covers at least eight architectures');
 
 # 1. The tooling must be able to BUILD the packages, not only publish someone else's.
@@ -303,6 +304,43 @@ SKIP: {
         $missing++ unless -f "$out/deb/${name}_${version}-${release}_all.deb";
     }
     is($missing, 0, 'it built a package for every architecture');
+}
+
+# 6. A second run on the SAME xcat-core commit must reuse the release, and a run whose
+#    --genesis-release points at a release built from ANOTHER commit must refuse it. Skipping on
+#    existence alone is how the channel sat on a 2026-08-25 set for a month.
+{
+    my $log = "$tmp/reuse.log";
+    my $status = run_mockbuild(
+        $log, "$tmp/repo-dep-reuse",
+        '--xcat-source', $source,
+        '--build-genesis',
+        '--genesis-release', $built,
+        '--genesis-work-dir', "$tmp/oe-work",
+        '--no-verify-repo',
+    );
+    is($status, 0, 'a second run on the same commit reuses the release it already built')
+        or diag(slurp($log));
+
+    # Move the checkout to a new commit. The release on disk is now from the previous one.
+    write_binary("$L_SOURCE/NOTES", "moved\n");
+    system("git -C '$L_SOURCE' add -A >/dev/null 2>&1") == 0 or die 'git add';
+    system("GIT_AUTHOR_DATE='$epoch +0000' GIT_COMMITTER_DATE='$epoch +0000'"
+         . " GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t\@t GIT_COMMITTER_NAME=t"
+         . " GIT_COMMITTER_EMAIL=t\@t git -C '$L_SOURCE' commit -q -m moved >/dev/null 2>&1") == 0
+        or die 'git commit';
+    my $stale = "$tmp/stale.log";
+    my $rc = run_mockbuild(
+        $stale, "$tmp/repo-dep-stale",
+        '--xcat-source', $source,
+        '--build-genesis',
+        '--genesis-release', $built,
+        '--genesis-work-dir', "$tmp/oe-work",
+        '--no-verify-repo',
+    );
+    isnt($rc, 0, 'a release built from another commit is refused, not silently reused');
+    like(slurp($stale), qr/holds a release built from/,
+         'and the failure says the release is from another commit');
 }
 
 done_testing();
