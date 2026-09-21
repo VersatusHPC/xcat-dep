@@ -121,6 +121,10 @@ my $skip_createrepo = 0;
 my $skip_tarball = 0;
 my $genesis_release = '';
 my $genesis_release_checksums;
+my $build_genesis = 0;
+# Persistent kas work directory. It holds the bitbake sstate cache, which is the whole
+# difference between a warm rebuild and a cold one: 372s against 1600s for one architecture.
+my $genesis_work_dir = '';
 my $scrub_all_chroots = 0;
 my $keep_buildroots = 0;   # keep per-step mock chroots after build (default: --scrub=chroot each)
 my $dry_run = 0;
@@ -182,6 +186,8 @@ GetOptions(
     'skip-createrepo!'  => \$skip_createrepo,
     'skip-tarball!'     => \$skip_tarball,
     'genesis-release=s' => \$genesis_release,
+    'build-genesis!'    => \$build_genesis,
+    'genesis-work-dir=s' => \$genesis_work_dir,
     'scrub-all-chroots!' => \$scrub_all_chroots,
     'keep-buildroots!'  => \$keep_buildroots,
     'collect-dir=s@'    => \@extra_collect_dirs,
@@ -371,6 +377,16 @@ require_command('mock') if $scrub_all_chroots;
 require_command('rpmsign') if $gpg_sign;
 $gpg_program = require_command('gpg') if $gpg_sign;
 
+# --build-genesis: produce the OpenEmbedded Genesis release here rather than be handed one. Until
+# now --genesis-release was the only way those packages could reach a repository, so the published
+# set was whatever a person last built by hand -- 2026-08-25, seven architectures, and short s390x
+# from the day upstream added it.
+if ($build_genesis) {
+    die "FATAL: --build-genesis writes the release into --genesis-release DIR; give it one\n"
+        if $genesis_release eq '';
+    build_genesis_release($genesis_release);
+}
+
 if ($genesis_release ne '') {
     $genesis_release = abs_path($genesis_release)
         or die "Cannot resolve --genesis-release directory\n";
@@ -493,6 +509,17 @@ $tgt_pm->wait_all_children;
 die "FATAL: $tgt_fail target(s) failed\n" if $tgt_fail;
 
 publish_genesis_common_repo() if $genesis_release;
+
+# Every deployable dep tree carries the shared Genesis repository, so the [common] completeness
+# requirement holds for every run that publishes one. It used to sit inside the
+# `if ($genesis_release ne '')` block above: the requirement applied only when the run was handed a
+# release, and every production run has that parameter empty, so a build with no OpenEmbedded
+# packages passed. A requirement conditional on the thing it requires observes nothing.
+#
+# The gate reads the PUBLISHED repository, not what this run produced, so a narrowed run passes on
+# what is already there -- the same way --skip-genesis and --skip-perl runs keep their per-target
+# cells green. The predicate is deploy_target's own, so the two gates cannot drift apart.
+verify_common_repo("$repo_dep/common") unless $dry_run || $no_verify_repo;
 
 print_step('All targets completed');
 exit 0;
@@ -1138,6 +1165,46 @@ sub deploy_target {
     my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
     print "Deployed rh$rel/$tarch: $n rpms\n";
 }
+
+#--------------------------------------------------------------------------------
+
+=head3 build_genesis_release
+
+    Build the OpenEmbedded Genesis package release into $destination.
+
+    Always --all. genesis-openembedded/build asks verify-release for the --complete check ONLY
+    when it was given --all, so there is deliberately no per-architecture option here: a partial
+    release is one neither consumer will publish.
+
+    Arguments:
+        $destination - the release directory to create
+    Returns:
+        Nothing. Dies when the build fails.
+
+=cut
+
+#--------------------------------------------------------------------------------
+sub build_genesis_release {
+    my ($destination) = @_;
+    my $builder = "$script_dir/genesis-openembedded/build";
+    die "FATAL: Genesis release builder not found: $builder\n" unless -x $builder;
+    if (-f "$destination/release.manifest") {
+        print "[genesis] release already built for this source: $destination\n";
+        return;
+    }
+    # --all gives every architecture AND makes build ask verify-release for the --complete check.
+    # --format rpm scopes the PACKAGING to what this script publishes: an EL build host has no
+    # dpkg-deb, so asking for the deb side here would fail on the host that cannot make it.
+    # sbuild-all.pl builds the same release with --format deb on a host that can.
+    my @command = ($builder, '--xcat-source', $xcat_src, '--all', '--format', 'rpm');
+    push(@command, '--work-dir', $genesis_work_dir) if $genesis_work_dir ne '';
+    push(@command, '--output-dir', $destination);
+    print_step("Build OpenEmbedded Genesis release -> $destination");
+    run_command(@command);
+    return;
+}
+
+#--------------------------------------------------------------------------------
 
 sub publish_genesis_common_repo {
     my $dest = "$repo_dep/common";
