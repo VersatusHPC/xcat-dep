@@ -102,6 +102,10 @@ my $no_verify_signature = 0;
 my $gpg_sign = 0;
 my $gpg_key_id = 'xcat@megware.com';
 my $gpg_home = '';
+my $build_genesis = 0;               # build that release here rather than be handed one
+# Persistent kas work directory. It carries the bitbake sstate cache between runs, which is the
+# difference between a warm rebuild and a cold one: 372s against 1600s for one architecture.
+my $genesis_work_dir = '';
 my $genesis_release = '';            # OpenEmbedded Genesis package release to publish alongside
 my $genesis_release_checksums;       # its verified SHA256SUMS, read once at startup
 # The OpenEmbedded Genesis debs are published ONCE, in a pool of their own that every suite indexes.
@@ -188,6 +192,8 @@ $spec{'publish!'}              = \$publish;        # run the finalization (assem
 $spec{'publish-lock-wait=i'}   = \$PUBLISH_LOCK_WAIT;   # seconds to queue behind another publisher
 $spec{'expect-arch=s'}         = \@expect_arch;   # repeatable; each value may be a space/comma list
 $spec{'verify-repo=s'}         = \$verify_repo_arg;   # standalone gate: --verify-repo=<apt_dir>
+$spec{'build-genesis!'}        = \$build_genesis;      # build the Genesis release, do not be handed one
+$spec{'genesis-work-dir=s'}    = \$genesis_work_dir;   # persistent kas work dir (sstate)
 $spec{'no-verify-repo!'}       = \$no_verify_repo;    # suppress the automatic pre-swap gate
 $spec{'no-verify-signature!'}  = \$no_verify_signature;   # explicit opt-out of the signature check
 $spec{'output=s'}              = \$output_root;   # --output alias
@@ -307,6 +313,16 @@ if (length $verify_repo_arg) {
 # script only VERIFIES it and copies the verified bytes into every selected suite. Resolved here --
 # after the standalone --verify-repo exit, so a verify-only run is not asked for a release, and before
 # any build or publish, so an invalid release fails the run before it touches the tree.
+# --build-genesis: produce the OpenEmbedded Genesis release here rather than be handed one. Until
+# now --genesis-release was the only way those packages could reach the shared pool, so the
+# published set was whatever a person last built by hand -- 2026-08-25, seven architectures, and
+# short s390x from the day upstream added it.
+if ($build_genesis) {
+    die "FATAL: --build-genesis writes the release into --genesis-release DIR; give it one\n"
+        if $genesis_release eq '';
+    build_genesis_release($genesis_release);
+}
+
 if ($genesis_release ne '') {
     $genesis_release = abs_path($genesis_release)
         or die "FATAL: cannot resolve --genesis-release directory\n";
@@ -1143,6 +1159,30 @@ sub install_genesis_release_debs {
     return scalar(@files);
 }
 
+#---------------------------------------------------------------------------------------------------
+# build_genesis_release($destination): build the OpenEmbedded Genesis release into $destination.
+#
+# Always --all. genesis-openembedded/build asks verify-release for the --complete check ONLY when it
+# was given --all, so there is deliberately no per-architecture option: a partial release is one
+# neither consumer will publish. --format deb scopes the packaging to what this script publishes.
+#---------------------------------------------------------------------------------------------------
+sub build_genesis_release {
+    my ($destination) = @_;
+    my $builder = "$script_dir/genesis-openembedded/build";
+    die "FATAL: Genesis release builder not found: $builder\n" unless -x $builder;
+    if (-f "$destination/release.manifest") {
+        print "  [genesis] release already built for this source: $destination\n";
+        return;
+    }
+    my @command = ($builder, '--xcat-source', $xcat_src, '--all', '--format', 'deb');
+    push(@command, '--work-dir', $genesis_work_dir) if $genesis_work_dir ne '';
+    push(@command, '--output-dir', $destination);
+    print_step("Build OpenEmbedded Genesis release -> $destination");
+    require XCAT::BuildUtils;
+    XCAT::BuildUtils::run_command(@command);
+    return;
+}
+
 sub verify_shared_pool {
     my ($pool) = @_;
     my %req = %{ shared_repository_requirements() };
@@ -1341,6 +1381,13 @@ sub publish_repo {
             # Require a valid signature iff we actually signed (--gpg-sign); a repo assembled without
             # it is intentionally unsigned and must not false-fail.
             verify_assembled_repo(\%MANIFEST, $tmp, \@dist_list, $expect, $gpg_sign);
+            # The shared Genesis pool is part of every published apt tree, so [shared] is required
+            # on every publish -- not only on a run that was handed a release. The requirement used
+            # to be reached only from install_genesis_release_debs, which runs under
+            # `if ($genesis_release ne '')`, and that parameter is empty in every production run. A
+            # publish that carried no OpenEmbedded packages therefore passed its own gate. This is
+            # the same defect mockbuild-all.pl had on the rpm side, in the same shape.
+            verify_shared_pool("$tmp/$GENESIS_POOL_RELATIVE");
         }
         1;
     } or do {

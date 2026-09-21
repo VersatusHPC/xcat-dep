@@ -279,4 +279,30 @@ my $built = "$tmp/release";
          'and the failure names the architecture that went missing');
 }
 
+# 5. The deb side of the same bug. sbuild-all.pl:321 reached shared_repository_requirements() only
+#    from inside `if ($genesis_release ne '')`, exactly as mockbuild-all.pl did, so a publish that
+#    carried no OpenEmbedded packages passed its own gate. One bug in two places.
+SKIP: {
+    skip 'no dpkg-deb on this host', 2 unless command_exists('dpkg-deb');
+    my $out = "$tmp/deb-release";
+    my $log = "$tmp/sbuild-build.log";
+    my $status = run_capture(
+        $log,
+        $^X, "$repo_root/sbuild-all.pl",
+        '--skip-build', '--dry-run',
+        '--xcat-source', $source,
+        '--build-genesis',
+        '--genesis-release', $out,
+        '--genesis-work-dir', "$tmp/oe-work",
+    );
+    is($status, 0, 'sbuild-all.pl can build the OpenEmbedded Genesis packages')
+        or diag(slurp($log));
+    my $missing = 0;
+    for my $architecture (@arches) {
+        my $name = XCAT::GenesisRelease::deb_package_name($architecture);
+        $missing++ unless -f "$out/deb/${name}_${version}-${release}_all.deb";
+    }
+    is($missing, 0, 'it built a package for every architecture');
+}
+
 done_testing();
