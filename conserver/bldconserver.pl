@@ -79,11 +79,13 @@ $cmd = "cp -rf ./conserver.spec $blddir/SPECS/";
 $cmd = "rpmbuild -bb $blddir/SPECS/conserver.spec";
 &runcmd($cmd);
 
-my $objrpm = "$blddir/RPMS/$arch/conserver-xcat-8.2.1-1.$arch.rpm";
+# The release moves whenever the spec changes what it provides, so match the name and the
+# version only.
+my ($objrpm) = glob("$blddir/RPMS/$arch/conserver-xcat-8.2.1-*.$arch.rpm");
 my $dstdir = "/tmp/build/$os/$arch";
 
 # check the build result
-if (! -f $objrpm) {
+if (!defined $objrpm || ! -f $objrpm) {
   print "The rpm file was not generated successfully\n";
   exit 1;
 } else {

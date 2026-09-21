@@ -11,7 +11,9 @@
 # hostname (console)
 %define master console
 
-%define distver 1
+# 8.2.1-1 was published without the capability below. dnf resolves on the capability and
+# cannot tell two builds of one NVRA apart, so the build that carries it gets a new release.
+%define distver 2
 
 Summary: Serial console server daemon/client
 Name: %{pkg}-xcat
@@ -29,6 +31,10 @@ Prefix: %{_prefix}
 
 Obsoletes: conserver conserver-client
 Provides: conserver conserver-client
+# xCAT cannot name one console backend: goconserver needs a Go toolchain the SLE 12 family
+# does not have, and rpm 4.11 there rejects a boolean dependency. Both backends declare this
+# capability, and xCAT requires the capability.
+Provides: xcat-console-backend
 
 %description
 Conserver is an application that allows multiple users to watch a

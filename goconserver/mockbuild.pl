@@ -199,8 +199,12 @@ write_file($spec_file, <<"SPEC");
 %global debug_package %{nil}
 Name:           goconserver
 Version:        $version
-Release:        4.el$rel$release_suffix
+Release:        5.el$rel$release_suffix
 Summary:        Console server written in Go for xCAT
+# xCAT cannot name one console backend: rpm 4.11 on the SLE 12 family rejects a boolean
+# dependency, so both backends declare this capability and xCAT requires the capability.
+# Release 4 was published without it, and dnf cannot tell two builds of one NVRA apart.
+Provides:       xcat-console-backend
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver
 BuildArch:      $arch
@@ -243,6 +247,9 @@ mkdir -p %{buildroot}/var/log/goconserver %{buildroot}/var/lib/goconserver
 %dir /var/lib/goconserver
 
 %changelog
+* Mon Sep 21 2026 xCAT build - $version-5.el$rel
+- Declare the capability xcat-console-backend, which xCAT requires.
+
 * Mon Aug 10 2026 xCAT build - $version-4.el$rel
 - Build inside a mock chroot (no host build). Modules are downloaded at build time but pinned +
   integrity-checked by a committed go.sum (no `go mod tidy`, no vendored tree). Compiled in the
@@ -364,8 +371,12 @@ sub cross_build_and_package {
 %global debug_package %{nil}
 Name:           goconserver
 Version:        $version
-Release:        4.el$rel$release_suffix
+Release:        5.el$rel$release_suffix
 Summary:        Console server written in Go for xCAT
+# xCAT cannot name one console backend: rpm 4.11 on the SLE 12 family rejects a boolean
+# dependency, so both backends declare this capability and xCAT requires the capability.
+# Release 4 was published without it, and dnf cannot tell two builds of one NVRA apart.
+Provides:       xcat-console-backend
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver
 
@@ -394,6 +405,9 @@ mkdir -p %{buildroot}/var/log/goconserver %{buildroot}/var/lib/goconserver
 %dir /var/lib/goconserver
 
 %changelog
+* Mon Sep 21 2026 xCAT build - $version-5.el$rel
+- Declare the capability xcat-console-backend, which xCAT requires.
+
 * Mon Aug 10 2026 xCAT build - $version-4.el$rel
 - Cross-compile on the build host (GOARCH=$goarch{$target_arch}) with the committed go.mod/go.sum,
   and package with rpmbuild --target $target_arch. The forcearch chroot would run the Go toolchain
