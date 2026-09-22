@@ -1264,12 +1264,20 @@ sub publish_file {
     die $error;
 }
 
-# createrepo_c command with upstream-matching, deterministic metadata. The tool's
-# defaults emit primary/filelists/other as *.xml.zst plus *.sqlite.bz2 (--database),
-# exactly the upstream shape; --set-timestamp-to-revision pins repomd to SOURCE_DATE_EPOCH.
+# createrepo_c command with deterministic metadata: primary/filelists/other as *.xml.zst, with
+# --set-timestamp-to-revision pinning repomd to SOURCE_DATE_EPOCH.
+#
+# NO --database. It writes *.sqlite.bz2, and SQLite needs POSIX locks. The build tree lives on the
+# shared shared tree, an NFS mount the hypervisor re-exports, and the kernel refuses locks there:
+# every attempt answers errno 524. createrepo_c died with "Cannot open .repodata/primary.sqlite:
+# Can not create db_info table: disk I/O error" on every target once the build hosts moved off
+# virtiofs -- xcat-dep-el-cd #161 and #162 both failed that way and staged nothing.
+#
+# --database is deprecated in createrepo_c 1.1.2 and --no-database is its default. dnf on el8+ and
+# zypper read the XML.
 sub createrepo_c_cmd {
     my ($dir) = @_;
-    return 'createrepo_c --update --database '
+    return 'createrepo_c --update '
         . '--revision ' . shell_quote($SOURCE_DATE_EPOCH) . ' --set-timestamp-to-revision '
         . shell_quote($dir);
 }
