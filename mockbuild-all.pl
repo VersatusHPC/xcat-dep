@@ -23,7 +23,8 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_c
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-                      build_mock_uniqueext rpmkeys_checksig_problem);
+                      build_mock_uniqueext rpmkeys_checksig_problem
+                      target_profile derive_target_from_repo_path);
 # print_step and sh_quote come from MockBuildUtils above; XCAT::BuildUtils carries the same
 # print_step, so it is deliberately NOT imported here (one definition, no redefinition warning).
 use XCAT::BuildUtils qw(
@@ -274,7 +275,8 @@ if ($finalize_xcat_dep) {
     unless ($no_verify_repo) {
         my %seen;
         for my $root ($x86, $ppc) {
-            my @cells = (glob("$root/rh*/x86_64"), glob("$root/rh*/ppc64le"));
+            my @cells = (glob("$root/rh*/x86_64"),   glob("$root/rh*/ppc64le"),
+                             glob("$root/sles*/x86_64"), glob("$root/sles*/ppc64le"));
             for my $d (sort @cells) {
                 next unless -d $d;
                 my $abs = abs_path($d);
@@ -409,17 +411,6 @@ my @build_targets = $target
 # (mockbuild-perl-packages.pl --epel-gap), and the noarch deps, the x86 boot loaders among them,
 # are built in the native, EPEL-free chroot of the same release (the rpms are identical for
 # every arch and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
-my %forcearch_targets = (
-    'rocky-10-riscv64-xcat' => {
-        rel          => 10,
-        arch         => 'riscv64',
-        # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
-        noarch_cfg   => 'rocky-10-x86_64',
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
-                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
-    },
-);
 
 # NOTE: no dhcp- packages are built here. DHCP backend selection is an install-time
 # rich dep in xCAT.spec (kea if system-release>=10 else /usr/sbin/dhcpd), so there is
@@ -511,7 +502,7 @@ sub build_one_target {
     # different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
     # cross-contaminate. Fold the target into run_id so each target gets its own tree.
     $run_id = "$target-$run_id" unless index($run_id, $target) >= 0;
-    my $profile = target_profile($target);
+    my $profile = target_profile($target, $host_arch);
     my $rel = $profile->{rel};
     $arch = $profile->{arch};
 
@@ -892,7 +883,7 @@ if (!$skip_genesis && !$dry_run) {
 # A skipped builder built nothing this run, so everything it published in the cell joins the run
 # repository here, ahead of the bump check, createrepo, the tarballs and the deploy gate.
 if (!$dry_run && ($skip_genesis || $skip_perl || $skip_xcat_dep)) {
-    my $published = "$repo_dep/rh$rel/$arch";
+    my $published = "$repo_dep/$profile->{osdir}/$arch";
     if (-d $published) {
         my %skipped = (genesis => $skip_genesis, perl => $skip_perl, dep => $skip_xcat_dep);
         # Only an rpm the configured key signed, by signer id and by rpmkeys --checksig, may be
@@ -952,12 +943,12 @@ if (!$dry_run && $copied_srpms == 0) {
 if (!$skip_createrepo) {
     run_step(
         step => 'Run createrepo',
-        cmd  => createrepo_c_cmd($repo_dir),
+        cmd  => createrepo_c_cmd($repo_dir, $profile),
         log  => "$log_root/createrepo.log",
     );
     run_step(
         step => 'Run createrepo for SRPM repo',
-        cmd  => createrepo_c_cmd($srpm_repo_dir),
+        cmd  => createrepo_c_cmd($srpm_repo_dir, $profile),
         log  => "$log_root/createrepo-srpm.log",
     );
 }
@@ -1026,33 +1017,6 @@ print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
     return { repo_dir => $repo_dir, rel => $rel, profile => $profile };
 }
 
-# The build profile of a target: EL release, arch of the rpms, where its noarch deps are built,
-# which dep builders run and which rpms the deployed repo must contain.
-sub target_profile {
-    my ($target) = @_;
-    if (my $fa = $forcearch_targets{$target}) {
-        return {
-            %{$fa},
-            forcearch => 1,
-            epel      => 0,
-        };
-    }
-    my ($rel) = $target =~ /epel-(\d+)-/;
-    die "Could not parse EL release from target '$target'\n" unless defined $rel;
-    return {
-        rel          => $rel,
-        arch         => $host_arch,
-        noarch_cfg   => $target,
-        forcearch    => 0,
-        epel         => 1,
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
-        # xCAT Requires all of these on every arch, and every one of them builds natively on
-        # every arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed
-        # artifacts), so a self-sufficient per-arch build produces the whole set.
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
-                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
-    };
-}
 
 # The forcearch targets are shipped in mock-configs/; mock, and the include('/etc/mock/<cfg>.cfg')
 # overlays of the per-package builders, need them in /etc/mock. Install a missing one; never
@@ -1080,9 +1044,10 @@ sub install_mock_cfg {
 sub deploy_target {
     my ($tgt, $info) = @_;
     my $rel   = $info->{rel};
+    my $osdir = $info->{profile}{osdir};
     my $src   = $info->{repo_dir};
     my $tarch = $info->{profile}{arch};
-    my $dest  = "$repo_dep/rh$rel/$tarch";
+    my $dest  = "$repo_dep/$osdir/$tarch";
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
 
@@ -1110,8 +1075,8 @@ sub deploy_target {
         # rpm an earlier layout left in the collection. On the STAGE, so the published cell is
         # already correct when it is swapped in.
         remove_genesis_packages($stage, 0) if $genesis_release;
-        sign_and_index_repo($stage);
-        write_dep_repo_metadata($stage, $rel, $tarch);
+        sign_and_index_repo($stage, $info->{profile});
+        write_dep_repo_metadata($stage, $osdir, $tarch);
         # Automatic completeness + signature gate on the freshly signed cell -- the single
         # consolidated gate (verify_target_repo, the same one --verify-repo runs). Asserts every
         # manifest-required package is present at its pinned version, the repomd signature verifies,
@@ -1141,7 +1106,7 @@ sub deploy_target {
     remove_tree($old) if -d $old;
 
     my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
-    print "Deployed rh$rel/$tarch: $n rpms\n";
+    print "Deployed $osdir/$tarch: $n rpms\n";
 }
 
 sub publish_genesis_common_repo {
@@ -1276,14 +1241,21 @@ sub publish_file {
 # --database is deprecated in createrepo_c 1.1.2 and --no-database is its default. dnf on el8+ and
 # zypper read the XML.
 sub createrepo_c_cmd {
-    my ($dir) = @_;
+    my ($dir, $profile) = @_;
+    # The SLE 12 family reads this metadata with zypper 1.13 and libsolv 0.6, which predate
+    # zstd: they retrieve the repository and then fail with "Failed to cache repo (4)", so a
+    # repository built with current tooling cannot be installed from at all on that family.
+    # gzip is what they understand, and every newer reader still does.
+    my $gz = ($profile && ($profile->{family} // '') eq 'suse' && ($profile->{rel} // 99) < 15)
+           ? '--compress-type gz --general-compress-type gz ' : '';
     return 'createrepo_c --update '
+        . $gz
         . '--revision ' . shell_quote($SOURCE_DATE_EPOCH) . ' --set-timestamp-to-revision '
         . shell_quote($dir);
 }
 
 sub sign_and_index_repo {
-    my ($dir) = @_;
+    my ($dir, $profile) = @_;
     my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
     if ($gpg_sign && @rpms) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
@@ -1291,7 +1263,7 @@ sub sign_and_index_repo {
             . ' --define ' . shell_quote("%__gpg $gpg_program") . ' --addsign '
             . join(' ', map { shell_quote($_) } @rpms));
     }
-    run_simple(createrepo_c_cmd($dir));
+    run_simple(createrepo_c_cmd($dir, $profile));
     if ($gpg_sign) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
@@ -1302,8 +1274,11 @@ sub sign_and_index_repo {
 }
 
 sub write_dep_repo_metadata {
-    my ($dir, $rel, $tarch) = @_;
-    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh$rel/$tarch";
+    my ($dir, $osdir, $tarch) = @_;
+    # One channel for every family: SUSE installs the same flat xcat-core as EL, so only the
+    # per-family dep directory differs -- rh<N> or sles<N>, the layout xcat.org has served
+    # since 2.10.
+    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/$osdir/$tarch";
     my $gpgcheck = $gpg_sign ? 1 : 0;
     my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
     # repo_gpgcheck=1 makes clients verify the DETACHED repomd.xml signature (repomd.xml.asc) against
@@ -1312,7 +1287,7 @@ sub write_dep_repo_metadata {
     open my $r, '>', "$dir/xcat-dep.repo" or die "Cannot write $dir/xcat-dep.repo: $!\n";
     print {$r} <<"EOF";
 [xcat-dep]
-name=xCAT 2 dependencies (rh$rel $tarch)
+name=xCAT 2 dependencies ($osdir $tarch)
 baseurl=$baseurl
 enabled=1
 gpgcheck=$gpgcheck
@@ -1322,7 +1297,7 @@ EOF
     close $r;
 
     write_local_repo_helper($dir);
-    write_buildinfo($dir, "rh$rel/$tarch");
+    write_buildinfo($dir, "$osdir/$tarch");
 }
 
 sub write_common_repo_metadata {
@@ -1402,8 +1377,8 @@ EOF
 # re-export repomd. Does NOT re-sign the rpms (cross_copy_genesis already did the copied
 # one; the rest keep their build-time signatures).
 sub reindex_and_sign_repo {
-    my ($dir) = @_;
-    run_simple(createrepo_c_cmd($dir));
+    my ($dir, $profile) = @_;
+    run_simple(createrepo_c_cmd($dir, $profile));
     if ($gpg_sign) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
@@ -1949,14 +1924,6 @@ sub verify_target_repo {
 # derive_target_from_repo_path: map a deployed per-target repo path .../rh<N>/<arch> to its manifest
 # target section name alma+epel-<N>-<arch>. Returns undef when the path lacks that rh<N>/<arch> tail,
 # so the standalone --verify-repo mode can require an explicit --target instead.
-sub derive_target_from_repo_path {
-    my ($dir) = @_;
-    my $tgt;
-    return $tgt unless defined $dir;
-    $tgt = "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
-    return $tgt;
-}
-
 sub reset_staging_repo {
     my ($directory) = @_;
     return unless -d $directory;

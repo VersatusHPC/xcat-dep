@@ -36,7 +36,6 @@ use File::Temp qw(tempdir);
 use Getopt::Long qw(GetOptions);
 use Pod::Usage qw(pod2usage);
 use POSIX qw(strftime);
-use Fcntl qw(:flock);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
 # NOTE: XCAT::GenesisRelease (the shared reader/validator of an OpenEmbedded Genesis package release,

@@ -17,7 +17,8 @@ use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_mo
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
                       parse_evr evr_constraint_ok parse_pin rpmkeys_checksig_problem
-                      bump_dep_release_suffix build_mock_uniqueext);
+                      bump_dep_release_suffix build_mock_uniqueext target_profile
+                      derive_target_from_repo_path);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
 sub quiet(&) {
@@ -733,6 +734,102 @@ my $vercmp = sub {
         'missing_perl_modules: an absent module is reported');
     is_deeply([ missing_perl_modules('Digest::SHA', 'No::Such::Module::Here') ],
         ['No::Such::Module::Here'], '... and only the absent one, from a mixed list');
+}
+
+
+# ---- target_profile: every family a pipeline builds resolves to its own deploy directory -------
+# mockbuild-all.pl derives the deploy subdir and the arch from the target NAME. xcat-dep-suse-cd
+# asks for opensuse-leap-<ver>-<arch>; when that name resolves to nothing the target dies before
+# the first mock runs, with "Could not parse EL release from target ...".
+{
+    my $el = target_profile('alma+epel-10-x86_64', 'x86_64');
+    is($el->{family},    'el',     'EL target is the el family');
+    is($el->{osdir},     'rh10',   '... deploys under rh10');
+    is($el->{arch},      'x86_64', '... builds for the host arch');
+    is($el->{forcearch}, 0,        '... is not cross-built');
+
+    my $rv = target_profile('rocky-10-riscv64-xcat', 'x86_64');
+    is($rv->{family},    'el',       'riscv64 target is the el family');
+    is($rv->{osdir},     'rh10',     '... deploys under rh10');
+    is($rv->{arch},      'riscv64',  '... builds riscv64 rpms');
+    is($rv->{forcearch}, 1,          '... is cross-built');
+
+    # The SLE 12 family is built in an openSUSE Leap 42.3 chroot, so its target carries the Leap
+    # version while its deploy directory carries the SLE one.
+    for my $c (['opensuse-leap-15.6-x86_64', 'x86_64', 'sles15'],
+               ['opensuse-leap-15.6-ppc64le', 'ppc64le', 'sles15'],
+               ['opensuse-leap-16.0-x86_64', 'x86_64', 'sles16'],
+               ['opensuse-leap-42.3-x86_64', 'x86_64', 'sles12']) {
+        my ($t, $ha, $osdir) = @{$c};
+        my $p = eval { target_profile($t, $ha) };
+        my $err = $@;
+        ok(defined $p, "$t resolves to a profile") or diag($err);
+        is(($p || {})->{family},     'suse', "... $t is the suse family");
+        is(($p || {})->{osdir},      $osdir, "... $t deploys under $osdir");
+        is(($p || {})->{arch},       $ha,    "... $t builds for the host arch");
+        is(($p || {})->{noarch_cfg}, $t,     "... $t builds its noarch deps in its own chroot");
+        is(($p || {})->{forcearch},  0,      "... $t is not cross-built");
+    }
+
+    # Leap 42.3 has no Go new enough for goconserver (go.mod asks for 1.25, 42.3 tops out at 1.11),
+    # so that cell
+    # builds conserver-xcat instead. xCAT chooses the backend at run time.
+    {
+        my $s12 = target_profile('opensuse-leap-42.3-x86_64', 'x86_64');
+        my %b12 = map { $_ => 1 } @{ $s12->{dep_builders} };
+        ok(!$b12{'goconserver'},  'SLE 12 does not build goconserver');
+        ok($b12{'conserver-xcat'}, '... it builds conserver-xcat as the console backend');
+        my $s15 = target_profile('opensuse-leap-15.6-x86_64', 'x86_64');
+        my %b15 = map { $_ => 1 } @{ $s15->{dep_builders} };
+        ok($b15{'goconserver'},   'Leap 15 still builds goconserver');
+    }
+
+    # The SLE 12 family reads repository metadata with zypper 1.13 / libsolv 0.6, which predate
+    # zstd. createrepo_c writes zstd by default, and that repository cannot be installed from at
+    # all there: it retrieves and then fails with "Failed to cache repo (4)".
+    # createrepo_c_cmd lives in the script, so extract it and drive it rather than matching text.
+    {
+        my $mba = "$FindBin::Bin/../mockbuild-all.pl";
+        $mba = 'mockbuild-all.pl' unless -f $mba;
+        my $src = do { open my $fh, '<', $mba or die "cannot read $mba: $!"; local $/; <$fh> };
+        my ($sub) = $src =~ /(sub createrepo_c_cmd \{.*?\n\})/s
+            or die "createrepo_c_cmd is not in mockbuild-all.pl -- it was renamed or inlined";
+        eval "package R; sub shell_quote { \"'\$_[0]'\" } our \$SOURCE_DATE_EPOCH = 1; $sub; 1"
+            or die "cannot load createrepo_c_cmd: $@";
+
+        like(R::createrepo_c_cmd('/tmp/x', target_profile('opensuse-leap-42.3-x86_64', 'x86_64')),
+             qr/--compress-type gz/, 'the SLE 12 cell indexes with gzip metadata');
+        unlike(R::createrepo_c_cmd('/tmp/x', target_profile('opensuse-leap-15.6-x86_64', 'x86_64')),
+               qr/--compress-type/, 'Leap 15 keeps the default metadata');
+        unlike(R::createrepo_c_cmd('/tmp/x', target_profile('alma+epel-10-x86_64', 'x86_64')),
+               qr/--compress-type/, '... and so does EL');
+    }
+
+    # An unrecognised target must die rather than resolve to a silent EL default: a wrong
+    # deploy directory publishes one family's rpms into another family's repo.
+    my $bogus = eval { target_profile('debian-13-amd64', 'x86_64') };
+    ok(!defined $bogus, 'an unrecognised target dies instead of guessing a deploy directory');
+}
+
+
+# ---- derive_target_from_repo_path: the completeness gate must identify a cell by its path -------
+# The post-build gate and --verify-repo are handed a deployed cell directory and must work out
+# which manifest section built it. A SUSE cell that resolves to nothing is published unverified.
+{
+    is(derive_target_from_repo_path('/b/xcat-dep/rh10/x86_64'), 'alma+epel-10-x86_64',
+        'an EL cell resolves to its manifest target');
+    is(derive_target_from_repo_path('/b/xcat-dep/rh9/ppc64le'), 'alma+epel-9-ppc64le',
+        '... on either arch');
+    is(derive_target_from_repo_path('/b/xcat-dep/sles15/x86_64'), 'opensuse-leap-15.6-x86_64',
+        'a SUSE cell resolves to the Leap chroot that builds it');
+    is(derive_target_from_repo_path('/b/xcat-dep/sles15/ppc64le'), 'opensuse-leap-15.6-ppc64le',
+        '... on either arch');
+    is(derive_target_from_repo_path('/b/xcat-dep/sles12/x86_64'), 'opensuse-leap-42.3-x86_64',
+        'an SLE 12 cell resolves to the Leap 42.3 chroot that builds it');
+    is(derive_target_from_repo_path('/b/xcat-dep/sles13/x86_64'), undef,
+        'a SUSE directory with no buildable chroot resolves to nothing, not to a wrong target');
+    is(derive_target_from_repo_path('/b/xcat-dep/common'), undef,
+        'a non-cell path resolves to nothing');
 }
 
 done_testing;

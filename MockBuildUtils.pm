@@ -23,7 +23,7 @@ our @EXPORT_OK = qw(
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-    build_mock_uniqueext rpm_in_cell
+    build_mock_uniqueext rpm_in_cell target_profile derive_target_from_repo_path
 );
 
 # install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
@@ -722,5 +722,104 @@ sub build_mock_uniqueext {
 
     return sprintf("mba-%02d-%s-%s", $idx, $run_part, $label_part);
 }
+
+
+my %forcearch_targets = (
+    'rocky-10-riscv64-xcat' => {
+        rel          => 10,
+        arch         => 'riscv64',
+        # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
+        noarch_cfg   => 'rocky-10-x86_64',
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+    },
+);
+
+# The build profile of a target: EL release, arch of the rpms, where its noarch deps are built,
+# which dep builders run and which rpms the deployed repo must contain.
+sub target_profile {
+    my ($target, $host_arch) = @_;
+    if (my $fa = $forcearch_targets{$target}) {
+        return {
+            %{$fa},
+            family    => 'el',
+            osdir     => "rh$fa->{rel}",
+            forcearch => 1,
+            epel      => 0,
+        };
+    }
+    # SUSE: one openSUSE Leap mock target per arch. Leap <major> and SLE <major> share a
+    # package set, and xcat.org has published the deps as sles<major> since 2.10, so the
+    # deploy directory drops the minor. The core is NOT built here: xCAT installs the same
+    # flat rpms on SUSE as on EL, because its dependencies resolve at install time.
+    # SLE 12 has no Leap counterpart: openSUSE 42.x is long dead and publishes no chroot, so
+    # that cell builds in a chroot made from the SLE 12 SP5 media and its target is named
+    # after that media. Both names carry the major version, which is the deploy directory.
+    if (my ($smaj) = $target =~ /^(?:opensuse-leap|sles)-(\d+)\.\d+-/) {
+        # Leap 42.x is the openSUSE build of the SLE 12 family, so it deploys to sles12, not
+        # sles42. Every other Leap major is numbered like the SLE major it serves.
+        my $sles = $smaj == 42 ? 12 : $smaj;
+        return {
+            rel          => $sles,
+            family       => 'suse',
+            osdir        => "sles$sles",
+            arch         => $host_arch,
+            noarch_cfg   => $target,
+            forcearch    => 0,
+            # Leap carries no EPEL, so the perl deps EPEL would supply are built here.
+            epel         => 0,
+            # goconserver needs a Go toolchain that SLE 12 never had: its go.mod asks for Go
+            # 1.25 and the newest Go for SLE 12 is far older. conserver-xcat is the other
+            # console backend, it is C, and it builds there. xCAT picks the backend at run
+            # time -- makegocons when /usr/bin/goconserver exists, makeconservercf otherwise.
+            dep_builders => [ grep { !($sles == 12 && $_ eq 'goconserver') }
+                              qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi) ],
+            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                                perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        };
+    }
+    my ($rel) = $target =~ /epel-(\d+)-/;
+    die "Could not parse a release from target '$target'\n" unless defined $rel;
+    return {
+        rel          => $rel,
+        family       => 'el',
+        osdir        => "rh$rel",
+        arch         => $host_arch,
+        noarch_cfg   => $target,
+        forcearch    => 0,
+        epel         => 1,
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        # xCAT Requires all of these on every arch, and every one of them builds natively on
+        # every arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed
+        # artifacts), so a self-sufficient per-arch build produces the whole set.
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+    };
+}
+
+
+# The mock target that builds each SUSE deploy directory. Leap <major>.<minor> is the only
+# buildable SUSE chroot -- mock-core-configs ships no SLE config, because SLE repos need a
+# subscription -- and Leap 15.6 shares SLE 15 SP6's package base, which is why xcat.org has
+# published these rpms as sles15 since 2.10.
+my %suse_build_target = (
+    sles15 => 'opensuse-leap-15.6',
+    sles12 => 'opensuse-leap-42.3',
+);
+
+# Map a deployed per-target repo path to the manifest target that built it, so the completeness
+# gate can check a cell it is handed by path alone.
+sub derive_target_from_repo_path {
+    my ($dir) = @_;
+    return undef unless defined $dir;
+    return "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
+    if ($dir =~ m{/(sles\d+)/([^/]+)/*$}) {
+        my $base = $suse_build_target{$1} or return undef;
+        return "$base-$2";
+    }
+    return undef;
+}
+
 
 1;

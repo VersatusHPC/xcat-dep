@@ -145,6 +145,11 @@ my $rpmbuild_cmd = join(' ',
     '--define', sh_quote("use_source_date_epoch_as_buildtime 1"),
     '--define', sh_quote("clamp_mtime_to_source_date_epoch 1"),
     '--define', sh_quote("_buildhost xcat-build"),
+    # This package is built with the HOST's rpmbuild rather than in a chroot, so it inherits the
+    # host's payload compressor. Current rpm writes zstd, and rpm 4.11 -- the SLE 12 family --
+    # cannot unpack it: the install dies mid-transaction with "unpacking of archive failed:
+    # cpio: Bad magic", after other packages are already in. Every rpm since 4.8 reads xz.
+    '--define', sh_quote("_binary_payload w6.xzdio"),
     '-ba',
     sh_quote("$rpmbuild_top/SPECS/xnba-undi.spec"),
 );
