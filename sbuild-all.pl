@@ -114,7 +114,18 @@ my @genesis_debs;                    # native xcat-genesis-base-<arch> deb(s): p
 # the other holder is a real publish (assemble + gate + swap), and waiting it out is almost always
 # better than failing the run.
 my $PUBLISH_LOCK_WAIT = 1800;
-my $RUN_LOCK_FH;
+my $RUN_LOCK_DIR;       # per-arch run lock, an atomic mkdir (the shared tree refuses flock)
+my $PUBLISH_LOCK_DIR;   # declared here so the END block below can see it
+my $PUBLISH_LOCK_OWNER = $$;
+# A directory is not released by a filehandle closing, so release both here. Guarded by pid: this
+# script forks per-package builders and a child must never release the parent's lock.
+END {
+    if ($$ == $PUBLISH_LOCK_OWNER) {
+        for my $d (grep { defined } ($RUN_LOCK_DIR, $PUBLISH_LOCK_DIR)) {
+            unlink "$d/owner"; rmdir $d;
+        }
+    }
+}
 
 # Builder map: manifest binary-package name -> the in-tree package dir that carries <dir>/sbuild.pl
 # and the maintained debian/. (goconserver's dir == its binary name.)
@@ -344,11 +355,19 @@ unless ($dry_run) { make_path($staging); }
 # (cron vs manual) from racing on this arch's staging + the shared apt tree. Not taken under --dry-run.
 unless ($dry_run) {
     make_path($output_root);
-    my $lockfile = "$output_root/.sbuild-all.$arch.lock";
-    open($RUN_LOCK_FH, '>', $lockfile) or die "FATAL: cannot open run lock $lockfile: $!\n";
-    unless (flock($RUN_LOCK_FH, LOCK_EX | LOCK_NB)) {
-        die "FATAL: another sbuild-all ($arch) is already running (lock held): $lockfile\n";
+    # A directory, not an flock. This lock lives on the shared tree, which is an NFS mount the
+    # hypervisor re-exports, and the kernel refuses locks on a re-export: every attempt answers
+    # errno 524. mkdir(2) is atomic there and needs no lock daemon.
+    my $lockfile = "$output_root/.sbuild-all.$arch.lock.d";
+    unless (mkdir $lockfile) {
+        die "FATAL: cannot take the run lock $lockfile: $!\n" unless $! == POSIX::EEXIST();
+        my $who = ''; if (open(my $h, '<', "$lockfile/owner")) { local $/; $who = <$h> // ''; close $h }
+        chomp $who;
+        die "FATAL: another sbuild-all ($arch) is already running (lock held"
+          . ($who ? " by [$who]" : "") . "): $lockfile\n";
     }
+    if (open(my $ow, '>', "$lockfile/owner")) { print {$ow} "pid=$$\n"; close $ow }
+    $RUN_LOCK_DIR = $lockfile;
 }
 
 # The per-package builders are separate processes with their own CLI, so the bound travels to them in
@@ -1010,25 +1029,28 @@ sub verify_assembled_repo {
 #      complete repo or the new complete repo -- never a half-wiped pool or an index that does not
 #      match its Release. A failed gate leaves the published tree untouched.
 #
-# The lock file lives on the shared tree; within a host flock() is authoritative, which is what
-# matters, since the pipeline's finalization step always runs on one host (the amd64 Ubuntu builder).
+# The lock lives on the shared tree, which is an NFS mount the hypervisor re-exports. The kernel
+# refuses locks on a re-export -- every flock() there answers errno 524 -- so the lock is a
+# directory, claimed with an atomic mkdir that the NFS server arbitrates. That works between hosts
+# as well as within one, which the flock it replaces did not.
 # ---------------------------------------------------------------------------------------------------
-my $PUBLISH_LOCK_FH;
 
 sub acquire_publish_lock {
     make_path($output_root);
-    my $lockfile = "$output_root/.sbuild-all.publish.lock";
-    open($PUBLISH_LOCK_FH, '>', $lockfile) or die "FATAL: cannot open publish lock $lockfile: $!\n";
-    unless (flock($PUBLISH_LOCK_FH, LOCK_EX | LOCK_NB)) {
+    my $lockfile = "$output_root/.sbuild-all.publish.lock.d";
+    unless (mkdir $lockfile) {
+        die "FATAL: cannot take the publish lock $lockfile: $!\n" unless $! == POSIX::EEXIST();
         print "  publish lock is held by another run -- waiting up to ${PUBLISH_LOCK_WAIT}s: $lockfile\n";
-        local $SIG{ALRM} = sub {
-            die "FATAL: timed out after ${PUBLISH_LOCK_WAIT}s waiting for the publish lock $lockfile\n";
-        };
-        alarm($PUBLISH_LOCK_WAIT);
-        my $ok = flock($PUBLISH_LOCK_FH, LOCK_EX);
-        alarm(0);
-        die "FATAL: cannot take the publish lock $lockfile: $!\n" unless $ok;
+        my $waited = 0;
+        until (mkdir $lockfile) {
+            die "FATAL: cannot take the publish lock $lockfile: $!\n" unless $! == POSIX::EEXIST();
+            die "FATAL: timed out after ${PUBLISH_LOCK_WAIT}s waiting for the publish lock $lockfile\n"
+                if $waited >= $PUBLISH_LOCK_WAIT;
+            sleep 1; $waited++;
+        }
     }
+    if (open(my $ow, '>', "$lockfile/owner")) { print {$ow} "pid=$$\n"; close $ow }
+    $PUBLISH_LOCK_DIR = $lockfile;
     print "  publish lock acquired: $lockfile\n";
     return $lockfile;
 }
