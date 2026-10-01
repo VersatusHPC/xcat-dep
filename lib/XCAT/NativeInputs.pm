@@ -14,7 +14,7 @@ use File::Temp qw(tempdir);
 use JSON::PP;
 
 our @EXPORT_OK = qw(load_inputs stage_inputs verify_input rpm_identity validate_outputs publisher_trust
-                    trust_dbpath);
+                    trust_dbpath scan_cpio_for_elf);
 
 sub read_file {
     my ($path) = @_;
@@ -170,35 +170,51 @@ sub read_exact {
     return $data;
 }
 
+#---
+# =head3 scan_cpio_for_elf
+# Descriptions: read a whole RPM cpio payload and reject any member whose contents start with the
+#               ELF magic. The caller owns the filehandle and the process that fills it.
+# Arguments: $fh -- a binmode filehandle on an RPM cpio stream
+# Returns: 1 when the stream ended in a cpio trailer and carried no ELF member; dies otherwise
+#---
+sub scan_cpio_for_elf {
+    my ($fh) = @_;
+    while (1) {
+        my $header = read_exact($fh, 110);
+        die "Invalid RPM cpio header\n" unless $header =~ /\A07070[12][0-9A-Fa-f]{104}\z/;
+        my @fields = map { hex($_) } $header =~ /\A.{6}(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})\z/s;
+        my ($size, $namesize) = @fields[6, 11];
+        die "Invalid RPM cpio filename\n" unless $namesize > 0 && $namesize <= 1048576;
+        my $name = read_exact($fh, $namesize);
+        die "Invalid RPM cpio filename terminator\n" unless $name =~ s/\0\z//;
+        read_exact($fh, (4 - (110 + $namesize) % 4) % 4);
+        last if $name eq 'TRAILER!!!' && $size == 0;
+        my $prefix = read_exact($fh, $size < 4 ? $size : 4);
+        die "ELF payload in publisher noarch RPM: $name\n" if $prefix eq "\x7fELF";
+        $size -= length($prefix);
+        while ($size) { my $count = $size < 65536 ? $size : 65536; read_exact($fh, $count); $size -= $count; }
+        read_exact($fh, (4 - $fields[6] % 4) % 4);
+    }
+    my $tail;
+    while (read($fh, $tail, 65536)) { die "Unexpected data after RPM cpio trailer\n" if $tail =~ /[^\0]/; }
+    return 1;
+}
+
 sub reject_elf_payload {
     my ($path) = @_;
     open my $fh, '-|', 'rpm2cpio', $path or die "Cannot read RPM payload: $!\n";
     binmode $fh;
-    my $error;
-    eval {
-        while (1) {
-            my $header = read_exact($fh, 110);
-            die "Invalid RPM cpio header\n" unless $header =~ /\A07070[12][0-9A-Fa-f]{104}\z/;
-            my @fields = map { hex($_) } $header =~ /\A.{6}(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})\z/s;
-            my ($size, $namesize) = @fields[6, 11];
-            die "Invalid RPM cpio filename\n" unless $namesize > 0 && $namesize <= 1048576;
-            my $name = read_exact($fh, $namesize);
-            die "Invalid RPM cpio filename terminator\n" unless $name =~ s/\0\z//;
-            read_exact($fh, (4 - (110 + $namesize) % 4) % 4);
-            last if $name eq 'TRAILER!!!' && $size == 0;
-            my $prefix = read_exact($fh, $size < 4 ? $size : 4);
-            die "ELF payload in publisher noarch RPM: $name\n" if $prefix eq "\x7fELF";
-            $size -= length($prefix);
-            while ($size) { my $count = $size < 65536 ? $size : 65536; read_exact($fh, $count); $size -= $count; }
-            read_exact($fh, (4 - $fields[6] % 4) % 4);
-        }
-        my $tail;
-        while (read($fh, $tail, 65536)) { die "Unexpected data after RPM cpio trailer\n" if $tail =~ /[^\0]/; }
-        1;
-    } or $error = $@;
-    my $closed = close($fh);
+    my ($scanned, $error);
+    eval { $scanned = scan_cpio_for_elf($fh); 1 } or $error = $@;
+    close $fh;
     die $error if $error;
-    die "rpm2cpio failed: $path\n" unless $closed;
+    # The exit status of rpm2cpio is deliberately not consulted. On rpm 4.19 it writes the whole
+    # payload and still exits 1 with nothing on stderr, for a package whose sha256, every digest and
+    # the publisher signature all verify -- measured on an openEuler 24.03 noarch RPM, where
+    # rpm2archive exits 0 on the same file. verify_input matches the sha256 and runs
+    # rpmkeys --checksig before this, so integrity is already established; what is left to establish
+    # here is that the payload was read to its trailer, and a truncated stream dies above.
+    die "RPM payload did not end in a cpio trailer: $path\n" unless $scanned;
 }
 
 sub verify_input {
