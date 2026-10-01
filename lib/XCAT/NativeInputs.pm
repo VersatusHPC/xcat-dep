@@ -9,10 +9,12 @@ use Exporter qw(import);
 use File::Basename qw(basename);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
+use File::Spec ();
 use File::Temp qw(tempdir);
 use JSON::PP;
 
-our @EXPORT_OK = qw(load_inputs stage_inputs verify_input rpm_identity validate_outputs publisher_trust);
+our @EXPORT_OK = qw(load_inputs stage_inputs verify_input rpm_identity validate_outputs publisher_trust
+                    trust_dbpath);
 
 sub read_file {
     my ($path) = @_;
@@ -218,9 +220,27 @@ sub verify_input {
     return $id;
 }
 
+#---
+# =head3 trust_dbpath
+# Descriptions: where the publisher keyring rpm database goes for one staging directory.
+# Arguments: $work -- the staging directory
+# Returns: a path on local storage
+#---
+sub trust_dbpath {
+    my ($work) = @_;
+    # rpm takes an fcntl transaction lock on <dbpath>/.rpm.lock. The CI staging tree is NFS with
+    # local_lock=none, where that lock answers errno 524 and the import fails with "can't create
+    # transaction lock". So the keyring never goes under $work.
+    my $root = $ENV{XCAT_DEP_TRUST_TMP} || File::Spec->tmpdir();
+    # Keyed on the staging directory, so two targets of one run do not share a database and a
+    # retry of the same target reuses its own.
+    return File::Spec->catdir($root, 'xcat-dep-trust-' . substr(Digest::SHA::sha256_hex($work), 0, 16));
+}
+
 sub publisher_trust {
     my ($plan, $work) = @_;
-    make_path("$work/trust", "$work/gnupg");
+    my $trust = trust_dbpath($work);
+    make_path($trust, "$work/gnupg");
     chmod 0700, "$work/gnupg";
     my $listing = capture('gpg', '--homedir', "$work/gnupg", '--batch', '--with-colons', '--show-keys', $plan->{publisher_key});
     my @primary;
@@ -231,8 +251,8 @@ sub publisher_trust {
         if ($pub && $fields[0] eq 'fpr') { push @primary, $fields[9]; $pub = 0; }
     }
     die "Publisher public key fingerprint mismatch\n" unless @primary == 1 && $primary[0] eq $plan->{publisher_fingerprint};
-    run('rpmkeys', '--dbpath', "$work/trust", '--import', $plan->{publisher_key});
-    return "$work/trust";
+    run('rpmkeys', '--dbpath', $trust, '--import', $plan->{publisher_key});
+    return $trust;
 }
 
 sub stage_inputs {
