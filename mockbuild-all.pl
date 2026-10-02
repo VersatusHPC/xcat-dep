@@ -421,7 +421,7 @@ if ($genesis_release ne '') {
 # An explicit --target builds just that target; otherwise build the current host
 # arch across rh8/rh9/rh10 into a deployable per-EL xcat-dep repo. This script builds
 # ONLY the host arch (uname -m) -- the other arch is produced on its own build host --
-# except for the forcearch targets (%forcearch_targets, --target only), which are
+# except for the forcearch targets (MockBuildUtils::FORCEARCH_TARGETS, --target only), which are
 # cross-built here through qemu-user-static.
 my $native_target = openeuler_build_target(\%os, $host_arch);
 my @build_targets = $target
@@ -432,23 +432,6 @@ my @build_targets = $target
 die "openEuler repository publication requires --gpg-sign\n"
     if !$dry_run && !$gpg_sign && grep { defined(openeuler_repo_subdir($_)) } @build_targets;
 
-# What a target builds. The mock-core-configs targets (<os>+epel-<rel>-<arch>) build every
-# dep natively on the host arch. The forcearch targets shipped in mock-configs/ cross-build
-# another arch that has no EPEL: the EPEL-only perl deps of xCAT are built for it
-# (mockbuild-perl-packages.pl --epel-gap), and the noarch deps, the x86 boot loaders among them,
-# are built in the native, EPEL-free chroot of the same release (the rpms are identical for
-# every arch and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
-my %forcearch_targets = (
-    'rocky-10-riscv64-xcat' => {
-        rel          => 10,
-        arch         => 'riscv64',
-        # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
-        noarch_cfg   => 'rocky-10-x86_64',
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
-                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
-    },
-);
 
 # Lock each target's repository cell so architecture builds can share --repo-dep.
 my @cell_locks = map {
@@ -1137,43 +1120,7 @@ print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
 # which dep builders run and which rpms the deployed repo must contain.
 sub target_profile {
     my ($target) = @_;
-    if (my $native = openeuler_repo_subdir($target)) {
-        my ($version, $arch) = $target =~ /\Aopeneuler-(.*)-([^-]+)\z/;
-        die "Native target '$target' requires a $arch build host, found $host_arch\n"
-            unless $arch eq $host_arch;
-        return {
-            rel          => $version,
-            arch         => $arch,
-            noarch_cfg   => $target,
-            forcearch    => 0,
-            epel         => 0,
-            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi python3-scp)],
-            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
-                                perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
-        };
-    }
-    if (my $fa = $forcearch_targets{$target}) {
-        return {
-            %{$fa},
-            forcearch => 1,
-            epel      => 0,
-        };
-    }
-    my ($rel) = $target =~ /epel-(\d+)-/;
-    die "Could not parse EL release from target '$target'\n" unless defined $rel;
-    return {
-        rel          => $rel,
-        arch         => $host_arch,
-        noarch_cfg   => $target,
-        forcearch    => 0,
-        epel         => 1,
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
-        # xCAT Requires all of these on every arch, and every one of them builds natively on
-        # every arch (the noarch deps -- grub2-xcat, xnba-undi, ipxe-xcat -- just repackage committed
-        # artifacts), so a self-sufficient per-arch build produces the whole set.
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
-                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
-    };
+    return MockBuildUtils::target_profile($target, $host_arch);
 }
 
 # The forcearch targets are shipped in mock-configs/; mock, and the include('/etc/mock/<cfg>.cfg')
@@ -2469,10 +2416,7 @@ sub take_lock {
 # path from here, so the lock covers the directory the deploy writes.
 sub target_cell {
     my ($target) = @_;
-    my $native = openeuler_repo_subdir($target);
-    return "$repo_dep/$native" if defined $native;
-    my $profile = target_profile($target);
-    return "$repo_dep/rh$profile->{rel}/$profile->{arch}";
+    return "$repo_dep/" . target_profile($target)->{cell};
 }
 
 # The lock of a repository cell <dir>/<arch> sits beside it, as <dir>/.<arch>.lock: the deploy
