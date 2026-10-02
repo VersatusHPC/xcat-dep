@@ -17,7 +17,7 @@ use FindBin qw($RealBin);
 use Test::More;
 
 use lib $RealBin, "$RealBin/..", "$RealBin/../lib";
-use MockBuildUtils qw(target_profile);
+use MockBuildUtils qw(target_profile dep_repo_baseurl dep_repo_label);
 
 # The cell is sles<MAJOR>/<arch>: every 15.x publishes under sles15, which is the directory
 # xcat.org serves and the one a SUSE conf's DEP_REPO points at.
@@ -58,5 +58,20 @@ for my $bad ('opensuse-tumbleweed-x86_64', 'opensuse-leap-15-x86_64', 'debian-12
     ok(!$p, "$bad is refused");
     like($@, qr/Could not parse EL release/, "... and says which parse failed for $bad");
 }
+
+# xcat.org serves Leap from the sles channel. A cell that advertised the yum channel would hand
+# every client a baseurl that does not hold it. 94daf29 had this and a1ab393 took it out with the
+# rest of the SUSE support.
+is(dep_repo_baseurl('sles15/x86_64'),
+   'https://xcat.org/files/xcat/repos/sles/devel/xcat-dep/sles15/x86_64',
+   'a Leap cell advertises the sles channel');
+is(dep_repo_baseurl('rh10/x86_64'),
+   'https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh10/x86_64',
+   'an EL cell advertises the yum channel');
+is(dep_repo_baseurl('openeuler24.03sp4/x86_64'),
+   'https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/openeuler24.03sp4/x86_64',
+   'an openEuler cell advertises the yum channel');
+is(dep_repo_label('sles15/x86_64'), 'sles15 x86_64', 'a Leap cell names itself sles15, not rh15');
+is(dep_repo_label('rh10/x86_64'), 'rh10 x86_64', 'an EL cell is unchanged');
 
 done_testing();
