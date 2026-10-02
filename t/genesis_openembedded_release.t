@@ -283,15 +283,56 @@ write_checksums($missing_release);
 dies_like(sub { validate_release($missing_release) }, qr/Genesis release is missing/,
     'incomplete architecture set fails');
 
+# xcat-core keeps the OpenEmbedded image and its layer in xCAT-genesis-base/oe. The directory was
+# called xCAT-genesis-builder until xcat-core 2a7364476, and a release builder that still names the
+# retired directory rejects every current xcat-core checkout before it reads anything else.
+{
+    my $layout_source = "$tmp/layout-xcat-core";
+    make_path("$layout_source/xCAT-genesis-base/oe");
+    write_binary("$layout_source/Version", "$version\n");
+    my $layout_log = "$tmp/layout-missing.log";
+    isnt(
+        run_capture(
+            $layout_log, $builder, '--xcat-source', $layout_source,
+            '--architecture', 'x86_64',
+            '--output-dir', "$tmp/layout-missing-output",
+        ),
+        0,
+        'release builder rejects an xcat-core source with no OpenEmbedded image',
+    );
+    like(read_binary($layout_log), qr{missing xCAT-genesis-base/oe/build},
+        'the required image path is the one xcat-core ships');
+
+    my $retired_source = "$tmp/retired-layout-xcat-core";
+    make_path("$retired_source/xCAT-genesis-builder/oe");
+    write_binary("$retired_source/Version", "$version\n");
+    write_binary("$retired_source/xCAT-genesis-builder/oe/build", "#!/bin/sh\nexit 0\n");
+    chmod(0755, "$retired_source/xCAT-genesis-builder/oe/build")
+      or die "Cannot make the retired fixture build executable: $!";
+    write_binary("$retired_source/xCAT-genesis-builder/oe/export", "#!/bin/sh\nexit 0\n");
+    my $retired_log = "$tmp/retired-layout.log";
+    isnt(
+        run_capture(
+            $retired_log, $builder, '--xcat-source', $retired_source,
+            '--architecture', 'x86_64',
+            '--output-dir', "$tmp/retired-layout-output",
+        ),
+        0,
+        'release builder rejects the retired xCAT-genesis-builder layout',
+    );
+    like(read_binary($retired_log), qr{missing xCAT-genesis-base/oe/build},
+        'the retired layout is reported as a missing image, not accepted');
+}
+
 SKIP: {
     skip 'git is not installed', 13 unless command_exists('git');
     my $source = "$tmp/dirty-xcat-core";
-    my $oe = "$source/xCAT-genesis-builder/oe";
+    my $oe = "$source/xCAT-genesis-base/oe";
     my $capability_marker = "$tmp/capability-query-ran";
     make_path($oe);
     write_binary("$source/Version", "$version\n");
     write_binary(
-        "$source/xCAT-genesis-builder/oe/build",
+        "$source/xCAT-genesis-base/oe/build",
         "#!/bin/sh\n"
           . "if [ \"\${1-}\" = --list-architectures ]; then\n"
           . "    [ -z \"\${XCAT_TEST_CAPABILITY_MARKER-}\" ] || : >\"\$XCAT_TEST_CAPABILITY_MARKER\"\n"
@@ -301,9 +342,9 @@ SKIP: {
           . "fi\n"
           . "exit 99\n",
     );
-    chmod(0755, "$source/xCAT-genesis-builder/oe/build")
+    chmod(0755, "$source/xCAT-genesis-base/oe/build")
       or die "Cannot make fixture build executable: $!";
-    write_binary("$source/xCAT-genesis-builder/oe/export", "#!/bin/sh\nexit 99\n");
+    write_binary("$source/xCAT-genesis-base/oe/export", "#!/bin/sh\nexit 99\n");
     for my $command (
         [ 'git', '-C', $source, 'init', '-q' ],
         [ 'git', '-C', $source, 'add', '.' ],
@@ -385,7 +426,7 @@ SKIP: {
 
     write_binary("$oe/build", "#!/bin/sh\nexit 23\n");
     chmod(0755, "$oe/build") or die "Cannot update fixture build executable: $!";
-    $commit_source->('xCAT-genesis-builder/oe/build', 'fail capability query');
+    $commit_source->('xCAT-genesis-base/oe/build', 'fail capability query');
     my $failed_log = "$tmp/failed-query.log";
     isnt(
         run_capture(
@@ -401,7 +442,7 @@ SKIP: {
 
     write_binary("$oe/build", "#!/bin/sh\nexit 0\n");
     chmod(0755, "$oe/build") or die "Cannot update fixture build executable: $!";
-    $commit_source->('xCAT-genesis-builder/oe/build', 'empty capability query');
+    $commit_source->('xCAT-genesis-base/oe/build', 'empty capability query');
     my $empty_log = "$tmp/empty-query.log";
     isnt(
         run_capture(
@@ -611,7 +652,7 @@ sub exercise_packager_from_unsearchable_cwd {
 
 sub exercise_builder_tmpdir {
     my $source = "$tmp/tmpdir-xcat-core";
-    my $oe = "$source/xCAT-genesis-builder/oe";
+    my $oe = "$source/xCAT-genesis-base/oe";
     make_path($oe);
     write_binary("$source/Version", "$version\n");
     write_binary(

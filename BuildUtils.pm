@@ -461,7 +461,7 @@ sub chroot_is_disposable {
 # control_field: extract a field's value from a Debian control paragraph text (the binary Package:
 # paragraph, or a DEBIAN/control). Returns the value with continuation lines folded to single spaces,
 # or undef if absent. Pure/testable. Used to lift Depends/Breaks/Replaces/Maintainer from the
-# maintained xCAT-genesis-builder/debian/control so the rpm->deb genesis shim keeps them.
+# maintained xCAT-genesis-base/debian/control so the rpm->deb genesis shim keeps them.
 sub control_field {
     my ($text, $field) = @_;
     return undef unless defined $text && defined $field;

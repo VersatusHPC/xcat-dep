@@ -636,7 +636,7 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
   the whole run non-zero.
 - **Genesis keeps its maintained packaging.** A native `xcat-genesis-base` deb is INGESTED as-is when
   provided (`--genesis-deb`); a converted rpm keeps the maintained control (Depends/Breaks/Replaces)
-  and maintainer scripts from `xcat-core/xCAT-genesis-builder/debian/`. Cross-arch ppc64el genesis on
+  and maintainer scripts from `xcat-core/xCAT-genesis-base/debian/`. Cross-arch ppc64el genesis on
   the amd64 host (issue #7610) is `--require-ppc-genesis`-gated.
 - **First-run chroots.** `sbuild-all.pl` auto-initializes any missing `<codename>-<arch>-sbuild` chroot
   (main + universe so `quilt` et al. resolve; fast mirror; shared-tree bind-mount) — no separate step.
