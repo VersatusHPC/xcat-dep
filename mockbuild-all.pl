@@ -1502,10 +1502,10 @@ sub sign_and_index_repo {
 sub write_dep_repo_metadata {
     my ($dir, $rel, $tarch, $subdir) = @_;
     $subdir //= "rh$rel/$tarch";
-    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/$subdir";
+    my $baseurl = MockBuildUtils::dep_repo_baseurl($subdir);
     my $gpgcheck = $gpg_sign || $subdir =~ /^openeuler/ ? 1 : 0;
     my $gpgkey_line = $gpgcheck ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
-    my $label = $subdir =~ /^openeuler/ ? $subdir : "rh$rel $tarch";
+    my $label = MockBuildUtils::dep_repo_label($subdir);
     # repo_gpgcheck=1 makes clients verify the DETACHED repomd.xml signature (repomd.xml.asc) against
     # gpgkey before trusting the metadata -- sign_and_index_repo produces both, so enforce it. Mirrors
     # gpgcheck: off when the repo is unsigned.

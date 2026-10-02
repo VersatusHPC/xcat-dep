@@ -24,7 +24,7 @@ our @EXPORT_OK = qw(
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     createrepo_c_cmd sign_and_index_repo
-    target_profile FORCEARCH_TARGETS
+    target_profile FORCEARCH_TARGETS dep_repo_baseurl dep_repo_label
     build_mock_uniqueext rpm_in_cell resolve_mock_cfg
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
@@ -956,6 +956,25 @@ sub target_profile {
                                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
         };
     }
+    # The dep repository publishes Leap under sles<MAJOR>, so every 15.x lands in sles15. Leap has
+    # no EPEL and builds natively; the dep set is the EL one without elilo-xcat, which packages an
+    # EL boot loader. 94daf29 added this mapping and a1ab393 removed it while scoping its pull
+    # request to EL, and the pipeline has asked for the target ever since.
+    if (my ($rel, $arch) = $target =~ /\Aopensuse-leap-(\d+)\.\d+-([A-Za-z0-9_]+)\z/) {
+        die "openSUSE target '$target' requires a $arch build host, found $host_arch\n"
+            unless $arch eq $host_arch;
+        return {
+            rel          => $rel,
+            arch         => $arch,
+            cell         => "sles$rel/$arch",
+            noarch_cfg   => $target,
+            forcearch    => 0,
+            epel         => 0,
+            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
+                                perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        };
+    }
     if (my $fa = $FORCEARCH_TARGETS{$target}) {
         return {
             %{$fa},
@@ -980,6 +999,37 @@ sub target_profile {
         required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                             perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     };
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 dep_repo_baseurl / dep_repo_label
+
+    Descriptions: Where a published dep cell says it came from, and what it calls
+                  itself.
+
+                  xcat.org serves Leap from the sles channel and everything else
+                  from the yum channel. A cell that names the wrong channel points
+                  every client at a tree that does not hold it.
+
+    Arguments:
+        $cell - the repository cell, e.g. rh10/x86_64, sles15/x86_64
+
+    Returns: the baseurl, or the human label.
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub dep_repo_baseurl {
+    my ($cell) = @_;
+    my $channel = $cell =~ m{^sles\d} ? 'sles' : 'yum';
+    return "https://xcat.org/files/xcat/repos/$channel/devel/xcat-dep/$cell";
+}
+
+sub dep_repo_label {
+    my ($cell) = @_;
+    my ($dir, $arch) = split m{/}, $cell, 2;
+    return defined $arch ? "$dir $arch" : $cell;
 }
 
 1;
