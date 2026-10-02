@@ -24,6 +24,7 @@ our @EXPORT_OK = qw(
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     createrepo_c_cmd sign_and_index_repo
+    target_profile FORCEARCH_TARGETS dep_repo_baseurl dep_repo_label
     build_mock_uniqueext rpm_in_cell resolve_mock_cfg
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
@@ -898,6 +899,137 @@ sub resolve_mock_cfg {
     my $short = $short_forms{$os_id} // $os_id;
     die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
       . "(tried $cfg_dir/${os_id}+epel-${rel}-${arch}.cfg and $cfg_dir/${short}+epel-${rel}-${arch}.cfg)\n";
+}
+
+# What a target builds. The mock-core-configs targets (<os>+epel-<rel>-<arch>) build every dep
+# natively on the host arch. The forcearch targets shipped in mock-configs/ cross-build another arch
+# that has no EPEL: the EPEL-only perl deps of xCAT are built for it
+# (mockbuild-perl-packages.pl --epel-gap), and the noarch deps, the x86 boot loaders among them, are
+# built in the native, EPEL-free chroot of the same release (the rpms are identical for every arch
+# and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
+my %FORCEARCH_TARGETS = (
+    'rocky-10-riscv64-xcat' => {
+        rel          => 10,
+        arch         => 'riscv64',
+        # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
+        noarch_cfg   => 'rocky-10-x86_64',
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+    },
+);
+
+sub FORCEARCH_TARGETS { return %FORCEARCH_TARGETS }
+
+#-------------------------------------------------------------------------------
+
+=head3 target_profile
+
+    Descriptions: What one mock target builds, and the repository cell it publishes
+                  into.
+
+    Arguments:
+        $target    - a mock target, e.g. alma+epel-10-x86_64
+        $host_arch - the architecture of the build host, from uname -m
+
+    Returns: a hash reference: rel, arch, cell, noarch_cfg, forcearch, epel,
+             dep_builders, required.
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub target_profile {
+    my ($target, $host_arch) = @_;
+    if (my $native = openeuler_repo_subdir($target)) {
+        my ($version, $arch) = $target =~ /\Aopeneuler-(.*)-([^-]+)\z/;
+        die "Native target '$target' requires a $arch build host, found $host_arch\n"
+            unless $arch eq $host_arch;
+        return {
+            rel          => $version,
+            arch         => $arch,
+            cell         => $native,
+            noarch_cfg   => $target,
+            forcearch    => 0,
+            epel         => 0,
+            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi python3-scp)],
+            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                                perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        };
+    }
+    # The dep repository publishes Leap under sles<MAJOR>, so every 15.x lands in sles15. Leap has
+    # no EPEL and builds natively; the dep set is the EL one without elilo-xcat, which packages an
+    # EL boot loader. 94daf29 added this mapping and a1ab393 removed it while scoping its pull
+    # request to EL, and the pipeline has asked for the target ever since.
+    if (my ($rel, $arch) = $target =~ /\Aopensuse-leap-(\d+)\.\d+-([A-Za-z0-9_]+)\z/) {
+        die "openSUSE target '$target' requires a $arch build host, found $host_arch\n"
+            unless $arch eq $host_arch;
+        return {
+            rel          => $rel,
+            arch         => $arch,
+            cell         => "sles$rel/$arch",
+            noarch_cfg   => $target,
+            forcearch    => 0,
+            epel         => 0,
+            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
+                                perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        };
+    }
+    if (my $fa = $FORCEARCH_TARGETS{$target}) {
+        return {
+            %{$fa},
+            cell      => "rh$fa->{rel}/$fa->{arch}",
+            forcearch => 1,
+            epel      => 0,
+        };
+    }
+    my ($rel) = $target =~ /epel-(\d+)-/;
+    die "Could not parse EL release from target '$target'\n" unless defined $rel;
+    return {
+        rel          => $rel,
+        arch         => $host_arch,
+        cell         => "rh$rel/$host_arch",
+        noarch_cfg   => $target,
+        forcearch    => 0,
+        epel         => 1,
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+        # xCAT Requires all of these on every arch, and every one of them builds natively on
+        # every arch (the noarch deps -- grub2-xcat, xnba-undi, ipxe-xcat -- just repackage committed
+        # artifacts), so a self-sufficient per-arch build produces the whole set.
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+    };
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 dep_repo_baseurl / dep_repo_label
+
+    Descriptions: Where a published dep cell says it came from, and what it calls
+                  itself.
+
+                  xcat.org serves Leap from the sles channel and everything else
+                  from the yum channel. A cell that names the wrong channel points
+                  every client at a tree that does not hold it.
+
+    Arguments:
+        $cell - the repository cell, e.g. rh10/x86_64, sles15/x86_64
+
+    Returns: the baseurl, or the human label.
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub dep_repo_baseurl {
+    my ($cell) = @_;
+    my $channel = $cell =~ m{^sles\d} ? 'sles' : 'yum';
+    return "https://xcat.org/files/xcat/repos/$channel/devel/xcat-dep/$cell";
+}
+
+sub dep_repo_label {
+    my ($cell) = @_;
+    my ($dir, $arch) = split m{/}, $cell, 2;
+    return defined $arch ? "$dir $arch" : $cell;
 }
 
 1;
