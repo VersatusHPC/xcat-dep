@@ -21,6 +21,7 @@ use XCAT::NFSLock ();
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell resolve_mock_cfg
                       carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
+                      native_build_accounts
                       read_manifest derive_target_from_repo_path
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
@@ -384,6 +385,7 @@ if ($install_deps) {
     my @missing = missing_perl_modules(@modules);
     die "FATAL: still missing after install: " . join(', ', @missing) . "\n" if @missing;
     print "  perl modules present: " . join(', ', @modules) . "\n";
+    ensure_native_build_account($_) for native_build_accounts(glob("$repo_root/openeuler/*.inputs.json"));
     print "  host is ready\n";
     if (lc($os_id) eq 'openeuler') {
         install_mock_cfg(basename($_, '.cfg')) for glob("$repo_root/mock-configs/openeuler-*.cfg");
@@ -1179,6 +1181,32 @@ sub target_profile {
 # The forcearch targets are shipped in mock-configs/; mock, and the include('/etc/mock/<cfg>.cfg')
 # overlays of the per-package builders, need them in /etc/mock. Install a missing one; never
 # overwrite one the host already has.
+#---
+# =head3 ensure_native_build_account
+# Descriptions: make the host resolve one native build uid, creating the account when it is absent.
+#               mock 6.8 calls getpwuid on the host for the chrootuid a native overlay pins, so a
+#               missing uid aborts the target with KeyError: 'getpwuid(): uid not found'.
+# Arguments: $account -- one { name, uid, gid } from native_build_accounts
+# Returns: nothing. Dies when the uid is still unresolvable afterwards.
+#---
+sub ensure_native_build_account {
+    my ($account) = @_;
+    my ($name, $uid, $gid) = @{$account}{qw(name uid gid)};
+    # An account under another name satisfies mock just as well, so only the uid decides.
+    if (defined(my $owner = getpwuid($uid))) {
+        print "  native build account: uid $uid already resolves to $owner\n";
+        return;
+    }
+    run_command('groupadd', '-g', $gid, $name) unless defined getgrgid($gid);
+    run_command('useradd', '-u', $uid, '-g', $gid, '-M', '-s', '/sbin/nologin',
+                '-c', 'xCAT native build user', $name);
+    # A negative nss lookup can be cached for the life of this process.
+    endpwent();
+    endgrent();
+    die "FATAL: uid $uid is still not resolvable after creating $name\n" unless defined getpwuid($uid);
+    print "  native build account: created $name uid $uid gid $gid\n";
+}
+
 sub install_mock_cfg {
     my ($cfg) = @_;
     install_mock_cfg('templates/openeuler-lts-xcat') if $cfg =~ /^openeuler-/;

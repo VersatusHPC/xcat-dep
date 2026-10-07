@@ -12,9 +12,12 @@ use lib dirname(__FILE__) . '/lib';
 use XCAT::NFSLock ();
 use Sys::Hostname;
 use Digest::MD5 qw(md5_hex);
+use File::Slurper qw(read_text);
+use JSON::PP ();
 
 our @EXPORT_OK = qw(
     install_deps_packages install_deps_command missing_perl_modules
+    native_build_accounts NATIVE_BUILD_ACCOUNT
     sh_quote print_step
     version_matches required_pkgs skipped_builder carry_over_rpms rpm_name rpm_arch rpm_source_rpm
     source_package rpm_digests_ok
@@ -33,6 +36,37 @@ our @EXPORT_OK = qw(
 # given /etc/os-release ID. Kept as data, beside the code that needs them, because the failure mode
 # is a build host provisioned by hand: xcat-master-ub had no perl-File-Slurper and xcat-master-ppc no
 # perl-IPC-Cmd, and each surfaced as a compile-time abort in the middle of a CD run.
+# The one host account the native openEuler builds run as. The name is this repository's choice;
+# the uid and gid come from the catalogs, which is why native_build_accounts reads them.
+use constant NATIVE_BUILD_ACCOUNT => 'xcatnative';
+
+# native_build_accounts(@catalog_paths): the host accounts the native input catalogs require.
+#
+# The native mock overlays pin chrootuid to a node's build_uid, and mock 6.8 resolves that uid on
+# the HOST, through getpwuid, before it touches the chroot. A uid the host does not have aborts the
+# target with KeyError: 'getpwuid(): uid not found'. build_uid 0 is root and needs nothing.
+#
+# Returns a list of { name, uid, gid } hashrefs, empty when every node builds as root. Only one
+# account name is defined, so a second non-root uid is refused rather than given an invented name.
+sub native_build_accounts {
+    my (@paths) = @_;
+    my %declared;
+    for my $path (@paths) {
+        my $catalog = JSON::PP->new->decode(read_text($path));
+        for my $node (@{ $catalog->{inputs} || [] }) {
+            next unless defined $node->{build_uid};
+            die "Invalid native build uid '$node->{build_uid}' in $path\n"
+                unless $node->{build_uid} =~ /\A(?:0|[1-9][0-9]*)\z/;
+            $declared{ 0 + $node->{build_uid} } = 1;
+        }
+    }
+    my @uids = sort { $a <=> $b } grep { $_ != 0 } keys %declared;
+    return () unless @uids;
+    die 'The native catalogs declare more than one non-root build uid ('
+        . join(', ', @uids) . '), and only one account name is defined' . "\n" if @uids > 1;
+    return ({ name => NATIVE_BUILD_ACCOUNT, uid => $uids[0], gid => $uids[0] });
+}
+
 sub install_deps_packages {
     my ($os_id) = @_;
     $os_id = '' unless defined $os_id;
