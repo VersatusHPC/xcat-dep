@@ -168,6 +168,17 @@ dnf -y install perl perl-File-Slurper perl-IPC-Cmd \
   dnf-plugins-core wget git
 ```
 
+It also creates the host account the native openEuler builds run as. The native mock overlays pin
+`chrootuid` to the catalog's `build_uid`, and mock resolves that uid on the host before it touches
+the chroot, so a host without it aborts the target with
+`KeyError: 'getpwuid(): uid not found: 1000'`. The uid comes from `openeuler/*.inputs.json`, never
+from this document. The equivalent by hand, for the uid those catalogs declare today:
+
+```bash
+groupadd -g 1000 xcatnative
+useradd -u 1000 -g 1000 -M -s /sbin/nologin -c 'xCAT native build user' xcatnative
+```
+
 If you will build the `xCAT-genesis-base` package (that is, you will **not** use `--skip-genesis`), install xCAT build dependencies:
 
 ```bash
