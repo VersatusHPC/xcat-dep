@@ -99,12 +99,14 @@ matching MN and installs xCAT + the freshly built xcat-dep there).
   `conserver-xcat` explicitly (it is **not** pulled in as a dependency), disable the `goconserver`
   service and enable the `conserver` service.
 - **`uftp`** is UFTP 5.0.4, the multicast file transfer tool, built from the upstream source with
-  the fixes in `uftp/00*.patch`. It is built as an rpm for every EL
-  target and as a deb for every Ubuntu target. RHEL and EPEL do not ship it, and Ubuntu ships UFTP
-  4.10, which does not work with UFTP 5. xCAT does not require it: install `uftp` on the management
-  node (the `uftp` sender) and in a diskless image (the `uftpd` receiver) to distribute images over
-  UFTP. The package enables no service. The deb replaces the Ubuntu `uftp` package, and removes the
-  init script and the logrotate file of that package, which started `uftpd` as a service.
+  the fixes in `uftp/00*.patch`. It is built as an rpm for every EL target and the openSUSE Leap
+  targets, and as a deb for every Ubuntu target. RHEL, EPEL, SLES and Leap do not ship it, and
+  Ubuntu ships UFTP 4.10, which does not work with UFTP 5. Its Leap build needs glibc 2.34 or later,
+  so it installs on SLES 15 SP6 or later and Leap 15.6, and not on SLES 15 SP5. xCAT does not
+  require it: install `uftp` on the management node (the `uftp` sender) and in a diskless image (the
+  `uftpd` receiver) to distribute images over UFTP. The package enables no service. The deb replaces
+  the Ubuntu `uftp` package, and removes the init script and the logrotate file of that package,
+  which started `uftpd` as a service.
 
   Each file in `uftp/00*.patch` is a git commit, and its message gives the defect that it fixes.
   To move the fixes to a new UFTP release, apply them to the current release in a git repository,

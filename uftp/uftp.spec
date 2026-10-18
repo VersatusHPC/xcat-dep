@@ -47,7 +47,9 @@ installs no service: uftpd runs only when it is started.
 %autosetup -p1
 
 %build
-%set_build_flags
+# openSUSE Leap 15 has no set_build_flags macro.
+%{?set_build_flags}
+%{!?set_build_flags:export CFLAGS="%{optflags}"}
 %make_build
 
 %install
