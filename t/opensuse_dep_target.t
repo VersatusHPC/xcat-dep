@@ -36,6 +36,7 @@ for my $t (sort keys %cell) {
     is($p->{epel}, 0,           "$t does not look for EPEL, which Leap has none of");
     is($p->{forcearch}, 0,      "$t builds natively, not through qemu-user-static");
     ok(scalar @{$p->{dep_builders}}, "$t has something to build");
+    ok((grep { $_ eq 'uftp' } @{$p->{dep_builders}}), "$t builds uftp, which neither SLES nor Leap ships");
     ok(scalar @{$p->{required}},     "$t asserts a required set");
 }
 
