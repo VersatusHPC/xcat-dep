@@ -9,10 +9,12 @@ use Exporter qw(import);
 use File::Basename qw(basename);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
+use File::Spec ();
 use File::Temp qw(tempdir);
 use JSON::PP;
 
-our @EXPORT_OK = qw(load_inputs stage_inputs verify_input rpm_identity validate_outputs publisher_trust);
+our @EXPORT_OK = qw(load_inputs stage_inputs verify_input rpm_identity validate_outputs publisher_trust
+                    trust_dbpath scan_cpio_for_elf native_overlay_text);
 
 sub read_file {
     my ($path) = @_;
@@ -77,8 +79,8 @@ sub load_inputs {
         die "Invalid native input type '$type'\n" unless $type =~ /\A(?:srpm|publisher|owner)\z/;
         if ($type eq 'owner') {
             die "Unsupported native build owner '$name'\n" unless grep { $_ eq $name }
-                qw(goconserver grub2-xcat ipmitool-xcat syslinux-xcat xnba-undi xCAT-genesis-base
-                   perl-Crypt-Rijndael perl-Crypt-SSLeay perl-HTTP-Async perl-IO-Stty perl-Net-HTTPS-NB perl-Net-Telnet);
+                qw(goconserver grub2-xcat ipmitool-xcat ipxe-xcat syslinux-xcat xnba-undi xCAT-genesis-base
+                   perl-Crypt-Rijndael perl-Crypt-SSLeay perl-HTTP-Async perl-IO-Stty perl-Net-DNS perl-Net-HTTPS-NB perl-Net-Telnet);
         }
         if ($type ne 'publisher') {
             my $uid = $type eq 'owner' && ($name eq 'xnba-undi' || $name eq 'xCAT-genesis-base') ? 0 : 1000;
@@ -168,35 +170,38 @@ sub read_exact {
     return $data;
 }
 
+sub scan_cpio_for_elf {
+    my ($fh) = @_;
+    while (1) {
+        my $header = read_exact($fh, 110);
+        die "Invalid RPM cpio header\n" unless $header =~ /\A07070[12][0-9A-Fa-f]{104}\z/;
+        my @fields = map { hex($_) } $header =~ /\A.{6}(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})\z/s;
+        my ($size, $namesize) = @fields[6, 11];
+        die "Invalid RPM cpio filename\n" unless $namesize > 0 && $namesize <= 1048576;
+        my $name = read_exact($fh, $namesize);
+        die "Invalid RPM cpio filename terminator\n" unless $name =~ s/\0\z//;
+        read_exact($fh, (4 - (110 + $namesize) % 4) % 4);
+        last if $name eq 'TRAILER!!!' && $size == 0;
+        my $prefix = read_exact($fh, $size < 4 ? $size : 4);
+        die "ELF payload in publisher noarch RPM: $name\n" if $prefix eq "\x7fELF";
+        $size -= length($prefix);
+        while ($size) { my $count = $size < 65536 ? $size : 65536; read_exact($fh, $count); $size -= $count; }
+        read_exact($fh, (4 - $fields[6] % 4) % 4);
+    }
+    my $tail;
+    while (read($fh, $tail, 65536)) { die "Unexpected data after RPM cpio trailer\n" if $tail =~ /[^\0]/; }
+    return 1;
+}
+
 sub reject_elf_payload {
     my ($path) = @_;
     open my $fh, '-|', 'rpm2cpio', $path or die "Cannot read RPM payload: $!\n";
     binmode $fh;
-    my $error;
-    eval {
-        while (1) {
-            my $header = read_exact($fh, 110);
-            die "Invalid RPM cpio header\n" unless $header =~ /\A07070[12][0-9A-Fa-f]{104}\z/;
-            my @fields = map { hex($_) } $header =~ /\A.{6}(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})(.{8})\z/s;
-            my ($size, $namesize) = @fields[6, 11];
-            die "Invalid RPM cpio filename\n" unless $namesize > 0 && $namesize <= 1048576;
-            my $name = read_exact($fh, $namesize);
-            die "Invalid RPM cpio filename terminator\n" unless $name =~ s/\0\z//;
-            read_exact($fh, (4 - (110 + $namesize) % 4) % 4);
-            last if $name eq 'TRAILER!!!' && $size == 0;
-            my $prefix = read_exact($fh, $size < 4 ? $size : 4);
-            die "ELF payload in publisher noarch RPM: $name\n" if $prefix eq "\x7fELF";
-            $size -= length($prefix);
-            while ($size) { my $count = $size < 65536 ? $size : 65536; read_exact($fh, $count); $size -= $count; }
-            read_exact($fh, (4 - $fields[6] % 4) % 4);
-        }
-        my $tail;
-        while (read($fh, $tail, 65536)) { die "Unexpected data after RPM cpio trailer\n" if $tail =~ /[^\0]/; }
-        1;
-    } or $error = $@;
-    my $closed = close($fh);
+    my ($scanned, $error);
+    eval { $scanned = scan_cpio_for_elf($fh); 1 } or $error = $@;
+    close $fh;
     die $error if $error;
-    die "rpm2cpio failed: $path\n" unless $closed;
+    die "RPM payload did not end in a cpio trailer: $path\n" unless $scanned;
 }
 
 sub verify_input {
@@ -218,9 +223,16 @@ sub verify_input {
     return $id;
 }
 
+sub trust_dbpath {
+    my $root = $ENV{XCAT_DEP_TRUST_TMP} || File::Spec->tmpdir();
+    # The keyring lives until this process exits, after the last verify_input of the run.
+    return tempdir('xcat-dep-trust-XXXXXX', DIR => $root, CLEANUP => 1);
+}
+
 sub publisher_trust {
     my ($plan, $work) = @_;
-    make_path("$work/trust", "$work/gnupg");
+    my $trust = trust_dbpath();
+    make_path($trust, "$work/gnupg");
     chmod 0700, "$work/gnupg";
     my $listing = capture('gpg', '--homedir', "$work/gnupg", '--batch', '--with-colons', '--show-keys', $plan->{publisher_key});
     my @primary;
@@ -231,8 +243,8 @@ sub publisher_trust {
         if ($pub && $fields[0] eq 'fpr') { push @primary, $fields[9]; $pub = 0; }
     }
     die "Publisher public key fingerprint mismatch\n" unless @primary == 1 && $primary[0] eq $plan->{publisher_fingerprint};
-    run('rpmkeys', '--dbpath', "$work/trust", '--import', $plan->{publisher_key});
-    return "$work/trust";
+    run('rpmkeys', '--dbpath', $trust, '--import', $plan->{publisher_key});
+    return $trust;
 }
 
 sub stage_inputs {
@@ -286,6 +298,46 @@ sub validate_outputs {
         die "Missing output from $node->{name}: $_\n" for grep { !$seen{$_} } sort keys %allowed;
     }
     return \%seen;
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 native_overlay_text
+
+    Descriptions: Render one native mock overlay configuration.
+
+    Arguments:
+        $purpose  - 1000, 0 or 'procenv'. 'procenv' is the overlay that builds
+                    procenv itself.
+        $base     - path of the snapshotted base mock configuration to include.
+        $prereqs  - path of the local repository holding the built prerequisites.
+
+    Returns: the overlay file content.
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub native_overlay_text {
+    my ($purpose, $base, $prereqs) = @_;
+    my $bootstrap = $purpose eq 'procenv';
+    my $uid = $bootstrap ? 1000 : $purpose;
+    my $url = $prereqs;
+    $url =~ s{([^A-Za-z0-9_./~-])}{sprintf('%%%02X', ord($1))}ge;
+    my $repo = "\n[xcat-native-inputs]\nname=xCAT native build prerequisites\nbaseurl=file://$url\n"
+        . "gpgkey=file://$url/repodata/repomd.xml.key\ngpgcheck=1\nrepo_gpgcheck=1\n"
+        . "enabled=1\nskip_if_unavailable=0\n";
+    my $out = 'include(' . JSON::PP->new->encode($base) . ")\n";
+    $out .= "config_opts['chrootuid'] = $uid\nconfig_opts['chrootgid'] = 1000\n";
+    $out .= "config_opts['dnf.conf'] += \"\"\"$repo\"\"\"\n";
+    $out .= "config_opts['plugin_conf']['bind_mount_enable'] = True\n";
+    # mock's procenv plugin runs the HOST's /usr/bin/procenv, not the chroot's, and it installs
+    # procenv into the buildroot itself through preexisting_deps. Enabling it made every native
+    # build need a host package neither repository declares, for a log nothing reads. mock's
+    # default is off; leave it there.
+    $out .= "config_opts['plugin_conf']['procenv_enable'] = False\n";
+    $out .= "config_opts['plugin_conf']['bind_mount_opts']['dirs'].append("
+        . '(' . JSON::PP->new->encode($prereqs) . ', ' . JSON::PP->new->encode($prereqs) . "))\n";
+    return $out;
 }
 
 1;
