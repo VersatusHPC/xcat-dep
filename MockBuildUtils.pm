@@ -981,7 +981,7 @@ my %FORCEARCH_TARGETS = (
         arch         => 'riscv64',
         # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
         noarch_cfg   => 'rocky-10-x86_64',
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat uftp)],
         required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                             perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     },
@@ -1063,7 +1063,7 @@ sub target_profile {
         noarch_cfg   => $target,
         forcearch    => $epel->{forcearch},
         epel         => 1,
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat uftp)],
         # xCAT Requires all of these on every arch, and every one of them builds natively on
         # every arch (the noarch deps -- grub2-xcat, xnba-undi, ipxe-xcat -- just repackage committed
         # artifacts), so a self-sufficient per-arch build produces the whole set.

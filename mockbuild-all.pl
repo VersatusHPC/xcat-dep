@@ -598,6 +598,7 @@ my @dep_builders = (
     { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl", noarch => 1 },
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
     { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
+    { name => 'uftp',        script => "$repo_root/uftp/mockbuild.pl" },
     { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl", noarch => 1 },
     { name => 'python3-scp', srpm => "$repo_root/python-scp/python-scp-0.14.5-1.oe2403.src.rpm",
       sha256 => '3461d2a3fe0122cac2893d8465ad1271ae21e5570a31d4402e3f887ef545a0e8' },
