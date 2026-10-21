@@ -111,8 +111,12 @@ run_command('bash', '-o', 'pipefail', '-c', 'cd ' . shell_quote($payload)
     . ' && rpm2cpio ' . shell_quote($rpm) . ' | cpio -idm --quiet');
 run_command('perl', "$pkg_dir/verify-payload.pl", "$payload/tftpboot/xcat/ipxe",
     "$pkg_dir/payload.sha256");
-check_installed("$payload/usr/share/doc/ipxe-xcat/ipxe-$version-source.tar.gz",
-    "$pkg_dir/ipxe-$version-source.tar.gz");
+# openSUSE installs documents under /usr/share/doc/packages, so take the path from the RPM.
+my @docs = grep { m{/ipxe-xcat/ipxe-\Q$version\E-source\.tar\.gz\z} }
+    split(/\n/, capture_command('rpm', '-qpd', $rpm));
+die "Expected one ipxe-$version-source.tar.gz document in $rpm, found " . scalar(@docs) . "\n"
+    if @docs != 1;
+check_installed("$payload$docs[0]", "$pkg_dir/ipxe-$version-source.tar.gz");
 for my $licence (grep { m{^licenses/} } @sources) {
     (my $installed = $licence) =~ s{^licenses/}{};
     check_installed("$payload/usr/share/licenses/ipxe-xcat/$installed", "$pkg_dir/$licence");
