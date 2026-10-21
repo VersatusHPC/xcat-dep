@@ -7,7 +7,7 @@ use File::Basename qw(basename dirname);
 use File::Copy qw(copy);
 use File::Glob qw(bsd_glob);
 use File::Find;
-use File::Path qw(remove_tree);
+use File::Path qw(make_path remove_tree);
 use lib dirname(__FILE__) . '/lib';
 use XCAT::NFSLock ();
 use Sys::Hostname;
@@ -25,7 +25,9 @@ our @EXPORT_OK = qw(
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     createrepo_c_cmd sign_and_index_repo
     target_profile FORCEARCH_TARGETS dep_repo_baseurl dep_repo_label
-    build_mock_uniqueext rpm_in_cell resolve_mock_cfg
+    build_mock_uniqueext rpm_in_cell resolve_mock_cfg mock_chroot_uid mock_result_dirs
+    make_traversable_path epel_target_profile epel_cell_path cell_lock_path
+    native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
 );
@@ -100,6 +102,26 @@ sub sh_quote {
     $s = '' if !defined $s;
     $s =~ s/'/'"'"'/g;
     return "'$s'";
+}
+
+# The host group the native openEuler builds run as: xcatnative, gid 1000. The native mock overlays
+# set chrootgid to it and chrootuid to the catalog's build_uid, so mock creates --resultdir and opens
+# state.log, build.log and root.log in it as that uid and group.
+use constant NATIVE_BUILD_GID => 1000;
+
+# native_owner_command: wrap a native build step so it runs against $overlay instead of the target's
+# own mock configuration, and with the identity mock will write results as.
+#
+# A dep builder makes its own result directories before mock starts -- ipxe-xcat/mockbuild.pl calls
+# make_path on $work_dir/srpm and $work_dir/rpm and passes each one to mock as --resultdir. The
+# script runs as root, so without the gid and the umask below those directories are root root 0755
+# and mock, reloaded to chrootuid 1000, cannot open its logs in them.
+sub native_owner_command {
+    my ($overlay, $mock_cfg, $command) = @_;
+    my $script = 'umask 0002 && mount --bind ' . sh_quote($overlay) . ' ' . sh_quote($mock_cfg)
+        . ' && exec sh -c ' . sh_quote($command);
+    return 'unshare --mount --propagation private -- setpriv --regid ' . NATIVE_BUILD_GID
+        . ' --clear-groups -- sh -c ' . sh_quote($script);
 }
 
 # print_step: print a step banner.
@@ -888,6 +910,39 @@ sub recover_common_repository {
     return 1;
 }
 
+# epel_target_profile($target, $host_arch): the EL release, the rpm architecture, and whether
+# mock cross-builds, for one EPEL target name on one build host. Returns undef for a name that is
+# not an EPEL target, so the caller keeps its own error.
+#
+# The target name carries the architecture of the rpms it produces, and that architecture decides
+# the repository cell the build deploys to. A host of another architecture cross-builds the target
+# through mock's own --forcearch and qemu-user; the rpms are still the target's architecture.
+sub epel_target_profile {
+    my ($target, $host_arch) = @_;
+    return undef unless defined $target && defined $host_arch;
+    my ($rel, $arch) = $target =~ /epel-(\d+)-(.+)\z/;
+    return undef unless defined $rel && defined $arch;
+    return { rel => $rel, arch => $arch, forcearch => ($arch eq $host_arch ? 0 : 1) };
+}
+
+# epel_cell_path($repo_dep, $profile): the repository cell an EPEL target deploys,
+# <repo-dep>/rh<rel>/<arch>, from the profile epel_target_profile returns.
+#
+# The deploy, the carry-over and the cell lock all take the path from here, so the lock covers the
+# directory the deploy writes. Two targets share a lock exactly when they share a cell.
+sub epel_cell_path {
+    my ($repo_dep, $profile) = @_;
+    return undef unless defined $repo_dep && $profile;
+    return "$repo_dep/rh$profile->{rel}/$profile->{arch}";
+}
+
+# cell_lock_path($cell): the lock of a repository cell <dir>/<arch> sits beside it, as
+# <dir>/.<arch>.lock, because the deploy replaces the cell directory itself.
+sub cell_lock_path {
+    my ($cell) = @_;
+    return dirname($cell) . '/.' . basename($cell) . '.lock';
+}
+
 # resolve_mock_cfg($os_id, $rel, $arch[, $cfg_dir]): the mock config for EL release $rel on this
 # host, <id>+epel-<rel>-<arch>. /etc/os-release says 'almalinux' where mock-core-configs names the
 # file 'alma', so the short form is tried too. $cfg_dir defaults to /etc/mock.
@@ -926,7 +981,7 @@ my %FORCEARCH_TARGETS = (
         arch         => 'riscv64',
         # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
         noarch_cfg   => 'rocky-10-x86_64',
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat uftp)],
         required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                             perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     },
@@ -964,8 +1019,8 @@ sub target_profile {
             noarch_cfg   => $target,
             forcearch    => 0,
             epel         => 0,
-            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi python3-scp)],
-            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat python3-scp)],
+            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
         };
     }
@@ -983,7 +1038,7 @@ sub target_profile {
             noarch_cfg   => $target,
             forcearch    => 0,
             epel         => 0,
-            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat uftp)],
             required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
         };
@@ -996,16 +1051,19 @@ sub target_profile {
             epel      => 0,
         };
     }
-    my ($rel) = $target =~ /epel-(\d+)-/;
-    die "Could not parse EL release from target '$target'\n" unless defined $rel;
+    # The target name, not the host, decides the architecture of the rpms and so the repository
+    # cell they deploy to. A host of another architecture cross-builds the target through mock's
+    # own --forcearch, which is what gives the emulated build its own step timeout.
+    my $epel = epel_target_profile($target, $host_arch);
+    die "Could not parse EL release from target '$target'\n" unless $epel;
     return {
-        rel          => $rel,
-        arch         => $host_arch,
-        cell         => "rh$rel/$host_arch",
+        rel          => $epel->{rel},
+        arch         => $epel->{arch},
+        cell         => "rh$epel->{rel}/$epel->{arch}",
         noarch_cfg   => $target,
-        forcearch    => 0,
+        forcearch    => $epel->{forcearch},
         epel         => 1,
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat uftp)],
         # xCAT Requires all of these on every arch, and every one of them builds natively on
         # every arch (the noarch deps -- grub2-xcat, xnba-undi, ipxe-xcat -- just repackage committed
         # artifacts), so a self-sufficient per-arch build produces the whole set.
@@ -1043,6 +1101,64 @@ sub dep_repo_label {
     my ($cell) = @_;
     my ($dir, $arch) = split m{/}, $cell, 2;
     return defined $arch ? "$dir $arch" : $cell;
+}
+
+# mock's own loader reads the configuration, so include() and the assignments around it resolve as
+# they do in a build. With no chrootuid, the loader returns the caller, as mock does: as root, the
+# user that SUDO_UID, USERHELPER_UID or PKEXEC_UID names.
+my $MOCK_CHROOTUID_LOADER = <<'PYTHON';
+import os
+import sys
+try:
+    from mockbuild.config import MOCKCONFDIR, load_config
+    from mockbuild.uid import setup_uid_manager
+except ImportError:
+    sys.exit('mock is not installed: cannot import mockbuild.config')
+args = (MOCKCONFDIR, sys.argv[1])
+if os.geteuid() == 0:
+    # As mock main(): load the configuration as the user that sudo names.
+    opts = setup_uid_manager().run_in_subprocess_without_privileges(load_config, *args)
+else:
+    opts = load_config(*args)
+print(opts['chrootuid'])
+PYTHON
+
+# mock_chroot_uid($cfg): the uid mock builds as with configuration file $cfg.
+sub mock_chroot_uid {
+    my ($cfg) = @_;
+    open my $pipe, '-|', 'python3', '-c', $MOCK_CHROOTUID_LOADER, $cfg
+        or die "Cannot run python3 to load $cfg: $!\n";
+    my $out = do { local $/; <$pipe> } // '';
+    close $pipe or die "mock cannot load $cfg\n";
+    $out =~ /\A(\d+)\n\z/ or die "mock gives no chrootuid for $cfg\n";
+    return $1;
+}
+
+# make_traversable_path(@dirs): make_path(@dirs), then give mode 0755 to each directory it created,
+# because make_path applies the umask. Directories that already exist keep their mode.
+# Returns the directories it created.
+sub make_traversable_path {
+    my @made = make_path(@_);
+    for my $dir (@made) {
+        chmod 0755, $dir or die "Cannot make $dir traversable: $!\n";
+    }
+    return @made;
+}
+
+# mock_result_dirs($dir, $cfg): create the three --resultdir directories one package build gives
+# mock, below $dir, owned by the uid mock builds as with $cfg. mock 6.8 reloads its uid manager from
+# chrootuid, so it opens state.log, build.log and root.log in --resultdir as that uid. The parents
+# that this sub creates get mode 0755, so that uid can reach the result directories.
+sub mock_result_dirs {
+    my ($dir, $cfg) = @_;
+    my $uid = mock_chroot_uid($cfg);
+    my @dirs = map { "$dir/$_" } qw(srpm restamp-srpm rpm);
+    make_traversable_path($dir);
+    make_path(@dirs);
+    for my $result (@dirs) {
+        chown $uid, -1, $result or die "Cannot give $result to uid $uid: $!\n";
+    }
+    return @dirs;
 }
 
 1;
