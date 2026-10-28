@@ -230,7 +230,7 @@ if ($mock_cfg !~ /^(?:openeuler|opensuse)-/) {
 # The x86_64 image is generated the same way. DHCPv6 writes a boot file only for a grub2 node, so
 # without this image an x86_64 node cannot network boot over IPv6. openSUSE names the grub2
 # module packages differently and ships without it; openEuler builds it, which a build confirmed.
-if ($mock_cfg !~ /^opensuse-/) {
+{
     run(
         "rpm -qpl " . sh_quote($main_rpm) .
         " | grep -Fx /tftpboot/boot/grub2/x86_64-efi/grubx64.efi >/dev/null"
