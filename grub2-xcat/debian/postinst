@@ -24,6 +24,11 @@ case "$1" in
     cp /tftpboot/boot/grub2/powerpc-ieee1275/core.elf /tftpboot/boot/grub2/grub2.ppc
     rm -f /tftpboot/boot/grub2/grub2.riscv64
     cp /tftpboot/boot/grub2/riscv64-efi/grubriscv64.efi /tftpboot/boot/grub2/grub2.riscv64
+    # x86_64 UEFI firmware loads boot/grub2/grub2.x86_64 (DHCP client architecture 7 and 9)
+    rm -f /tftpboot/boot/grub2/grub2.x86_64
+    if [ -f /tftpboot/boot/grub2/x86_64-efi/grubx64.efi ]; then
+        cp /tftpboot/boot/grub2/x86_64-efi/grubx64.efi /tftpboot/boot/grub2/grub2.x86_64
+    fi
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

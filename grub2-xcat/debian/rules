@@ -15,12 +15,25 @@ export DH_COMPAT=8
 build:
 	pwd
 	tar -zxvf ./grub2-res.tar.gz
+	# The x86_64 network loader. DHCPv6 names boot/grub2/grub2.x86_64 as the boot file of a
+	# grub2 node, and the apt package shipped no such file: the distro grubx64.efi carries the
+	# distro prefix and never finds the boot/grub2/grub.cfg-* that nodeset writes. The module
+	# list is the one grub2-xcat.spec uses, so both packagings ship the same image.
+	# grub-efi-amd64-bin is amd64 only, so a build on another architecture ships no image.
+	if [ -d /usr/lib/grub/x86_64-efi ]; then \
+	  mkdir -p x86_64-efi; \
+	  grub-mkimage -O x86_64-efi -p /boot/grub2 -o x86_64-efi/grubx64.efi \
+	    tftp efinet net http normal linux configfile search search_fs_file search_fs_uuid \
+	    search_label echo test cat ls boot reboot halt help fat ext2 xfs part_gpt part_msdos \
+	    gzio all_video video efi_gop efi_uga font gettext terminal terminfo loadenv read sleep; \
+	fi
 
 clean:
 	dh_testdir
 	dh_testroot
 	dh_clean -d
 	rm -rf ./powerpc-ieee1275
+	rm -rf ./x86_64-efi
 
 install:
 	pwd
@@ -29,6 +42,12 @@ install:
 	dh_installdirs
 	dh_install -X".svn"
 	dh_link
+	# Staged by hand rather than through debian/install: the image is absent on a builder
+	# whose architecture has no x86_64-efi module tree, and dh_install fails on a missing file.
+	if [ -f x86_64-efi/grubx64.efi ]; then \
+	  install -D -m 0644 x86_64-efi/grubx64.efi \
+	    debian/grub2-xcat/tftpboot/boot/grub2/x86_64-efi/grubx64.efi; \
+	fi
 
 
 # Build architecture-independent files here.
