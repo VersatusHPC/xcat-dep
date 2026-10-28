@@ -227,6 +227,26 @@ if ($mock_cfg !~ /^(?:openeuler|opensuse)-/) {
     die "Unexpected aarch64 grub2 image type: $aa64_efi is $aa64_efi_type, expected PE32+ Aarch64\n"
         if $aa64_efi_type ne 'PE32+ Aarch64';
 }
+# The x86_64 image is generated the same way. DHCPv6 writes a boot file only for a grub2 node, so
+# without this image an x86_64 node cannot network boot over IPv6. openSUSE names the grub2
+# module packages differently and ships without it; openEuler builds it, which a build confirmed.
+if ($mock_cfg !~ /^opensuse-/) {
+    run(
+        "rpm -qpl " . sh_quote($main_rpm) .
+        " | grep -Fx /tftpboot/boot/grub2/x86_64-efi/grubx64.efi >/dev/null"
+    );
+    my $extract_dir = "$work_dir/payload-x64";
+    remove_tree($extract_dir) if -d $extract_dir;
+    make_path($extract_dir);
+    run(
+        "cd " . sh_quote($extract_dir) . " && rpm2cpio " . sh_quote($main_rpm) .
+        " | cpio -idm --quiet ./tftpboot/boot/grub2/x86_64-efi/grubx64.efi"
+    );
+    my $x64_efi = "$extract_dir/tftpboot/boot/grub2/x86_64-efi/grubx64.efi";
+    my $x64_efi_type = pe_image_type($x64_efi);
+    die "Unexpected x86_64 grub2 image type: $x64_efi is $x64_efi_type, expected PE32+ x86-64\n"
+        if $x64_efi_type ne 'PE32+ x86-64';
+}
 print "Verified RPM name/arch/payload: $main_rpm\n";
 
 print_step("Copy artifacts and logs");

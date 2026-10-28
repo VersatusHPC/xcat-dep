@@ -6,7 +6,7 @@ Name: grub2-xcat
 Epoch: 1
 Version: 1.0
 #Release: snap%(date +"%Y%m%d%H%M")
-Release: 4
+Release: 5
 License: GPLv3+
 Group: Applications/System
 Vendor: IBM Corp.
@@ -30,6 +30,12 @@ Source2: grubriscv64.efi
 %if ! 0%{?openEuler} && ! 0%{?suse_version}
 BuildRequires: grub2-tools
 BuildRequires: grub2-efi-aa64-modules
+%endif
+# The x86_64 network loader needs only the module tree, which is noarch. openSUSE names these
+# packages differently, so it ships without the image.
+%if ! 0%{?suse_version}
+BuildRequires: grub2-tools
+BuildRequires: grub2-efi-x64-modules
 %endif
 
 Provides: grub2-xcat 
@@ -67,6 +73,16 @@ grub2-mkimage -O arm64-efi -p /boot/grub2 -o %{_builddir}/grubaa64.efi \
   search_label echo test cat ls boot reboot halt help fat ext2 xfs part_gpt part_msdos \
   gzio all_video video efi_gop font gettext terminal terminfo loadenv read sleep
 %endif
+# The x86_64 network loader. DHCPv6 names boot/grub2/grub2.x86_64 as the boot file of a grub2
+# node, and nothing shipped it: the distro grubx64.efi carries the distro prefix and never finds
+# the boot/grub2/grub.cfg-* that nodeset writes. Without this an x86_64 node cannot network boot
+# over IPv6 at all, because a bootfile-url is only written for a grub2 node.
+%if ! 0%{?suse_version}
+grub2-mkimage -O x86_64-efi -p /boot/grub2 -o %{_builddir}/grubx64.efi \
+  tftp efinet net http normal linux configfile search search_fs_file search_fs_uuid \
+  search_label echo test cat ls boot reboot halt help fat ext2 xfs part_gpt part_msdos \
+  gzio all_video video efi_gop efi_uga font gettext terminal terminfo loadenv read sleep
+%endif
 
 %pre
 
@@ -88,6 +104,10 @@ install -m 0644 %{SOURCE2} $RPM_BUILD_ROOT/%{prefix}/riscv64-efi/grubriscv64.efi
 mkdir -p $RPM_BUILD_ROOT/%{prefix}/aarch64-efi
 install -m 0644 %{_builddir}/grubaa64.efi $RPM_BUILD_ROOT/%{prefix}/aarch64-efi/grubaa64.efi
 %endif
+%if ! 0%{?suse_version}
+mkdir -p $RPM_BUILD_ROOT/%{prefix}/x86_64-efi
+install -m 0644 %{_builddir}/grubx64.efi $RPM_BUILD_ROOT/%{prefix}/x86_64-efi/grubx64.efi
+%endif
 
 
 
@@ -102,6 +122,11 @@ rm -f %{prefix}/grub2.aarch64
 if [ -f %{prefix}/aarch64-efi/grubaa64.efi ]; then
    cp  %{prefix}/aarch64-efi/grubaa64.efi %{prefix}/grub2.aarch64
 fi
+# x86_64 UEFI firmware loads boot/grub2/grub2.x86_64 (DHCP client architecture 7 and 9)
+rm -f %{prefix}/grub2.x86_64
+if [ -f %{prefix}/x86_64-efi/grubx64.efi ]; then
+   cp  %{prefix}/x86_64-efi/grubx64.efi %{prefix}/grub2.x86_64
+fi
 exit 0
 
 %clean
@@ -114,6 +139,9 @@ exit 0
 %{prefix}/riscv64-efi/
 %if ! 0%{?openEuler} && ! 0%{?suse_version}
 %{prefix}/aarch64-efi/
+%endif
+%if ! 0%{?suse_version}
+%{prefix}/x86_64-efi/
 %endif
 %defattr(-,root,root)
 
