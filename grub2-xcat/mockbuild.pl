@@ -94,6 +94,9 @@ print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
 
 print_step("Verify grub2 resource payload");
+# The tarball is still the openEuler and openSUSE source of powerpc-ieee1275/: those targets
+# cannot build the image, because openEuler needs a grub2-tools build dependency only the EL
+# branch of the spec carries and openSUSE names the module package grub2-powerpc-ieee1275.
 my $resource_tar = "$pkg_dir/grub2-res.tar.gz";
 die "Missing required resource tarball: $resource_tar\n" if !-f $resource_tar;
 run(
@@ -226,6 +229,32 @@ if ($mock_cfg !~ /^(?:openeuler|opensuse)-/) {
     my $aa64_efi_type = pe_image_type($aa64_efi);
     die "Unexpected aarch64 grub2 image type: $aa64_efi is $aa64_efi_type, expected PE32+ Aarch64\n"
         if $aa64_efi_type ne 'PE32+ Aarch64';
+}
+# The ppc64le image is generated in %build too (grub2-mkimage -O powerpc-ieee1275). openEuler and
+# openSUSE still unpack grub2-res.tar.gz, whose 2014 core.elf has no DHCPv6 client, so the string
+# net_bootp6 is what tells the generated image from that payload. grub's powerpc-ieee1275
+# platform is 32-bit big-endian PowerPC, at 2.12 as it was in 2014, so the ELF class alone cannot.
+if ($mock_cfg !~ /^(?:openeuler|opensuse)-/) {
+    my $extract_dir = "$work_dir/payload-ppc";
+    remove_tree($extract_dir) if -d $extract_dir;
+    make_path($extract_dir);
+    run(
+        "cd " . sh_quote($extract_dir) . " && rpm2cpio " . sh_quote($main_rpm) .
+        " | cpio -idm --quiet ./tftpboot/boot/grub2/powerpc-ieee1275/core.elf"
+    );
+    my $core_elf = "$extract_dir/tftpboot/boot/grub2/powerpc-ieee1275/core.elf";
+    my $core_elf_type = elf_image_type($core_elf);
+    die "Unexpected ppc64le grub2 image type: $core_elf is $core_elf_type, expected ELF32 MSB PowerPC\n"
+        if $core_elf_type ne 'ELF32 MSB PowerPC';
+    run("grep -qa net_bootp6 " . sh_quote($core_elf));
+    # The 2014 payload held 187 files. A generated image needs none of them: it carries its
+    # modules, and grub refuses a module built by another grub.
+    my $shipped = capture(
+        "rpm -qpl " . sh_quote($main_rpm) .
+        " | grep -c '^/tftpboot/boot/grub2/powerpc-ieee1275/' || true"
+    );
+    die "Expected only core.elf under powerpc-ieee1275/, found $shipped files\n"
+        if $shipped ne '1';
 }
 print "Verified RPM name/arch/payload: $main_rpm\n";
 
@@ -379,6 +408,25 @@ sub pe_image_type {
                         0x8664 => 'x86-64', 0xaa64 => 'Aarch64', 0x014c => 'Intel 80386');
     my $format = $magic == 0x20b ? 'PE32+' : $magic == 0x10b ? 'PE32' : sprintf('PE (magic 0x%x)', $magic);
     return "$format " . ($machine_name{$machine} // sprintf('machine 0x%04x', $machine));
+}
+
+# Image type of an ELF file read from its own header, "ELF32 MSB PowerPC" for the Open Firmware
+# image ppc64le firmware loads (e_ident class 1, data 2, e_machine 20); anything else comes back
+# as a short description for the error message. file(1) is not asked, because an EL8 build host
+# carries an older magic set than an EL10 one and the two describe the same image differently.
+sub elf_image_type {
+    my ($path) = @_;
+    open my $fh, '<:raw', $path or die "Cannot read $path: $!\n";
+    my $buf = '';
+    my $read = read($fh, $buf, 20);
+    close $fh;
+    return 'truncated file' if !defined $read || $read != 20;
+    my ($magic, $class, $data, $machine) = unpack('a4 C C x12 n', $buf);
+    return 'not an ELF file' if $magic ne "\x7fELF";
+    my %machine_name = (20 => 'PowerPC', 21 => 'PowerPC64', 62 => 'x86-64', 183 => 'Aarch64');
+    my $format = $class == 1 ? 'ELF32' : $class == 2 ? 'ELF64' : "ELF (class $class)";
+    my $order  = $data  == 2 ? 'MSB'   : $data  == 1 ? 'LSB'   : "data $data";
+    return "$format $order " . ($machine_name{$machine} // "machine $machine");
 }
 
 sub slurp {
