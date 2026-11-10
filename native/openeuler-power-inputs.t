@@ -208,25 +208,25 @@ for my $case (['publisher-elf', qr/ELF payload/], ['publisher-arch', qr/not a no
     my $generated = signed_copy($rpm{'native-child'}, 'generated-build-signer', 'build');
     my $publisher = "$dest/publisher-package-1-1.oe2403.noarch.rpm";
     my $child = "$dest/native-child-1-1.oe2403.noarch.rpm";
-    copy($signed{'publisher-package'}, $publisher) or die $!;
+    my $resigned = signed_copy($rpm{'publisher-package'}, 'publisher-build-signer', 'build');
+    copy($resigned, $publisher) or die $!;
     copy($generated, $child) or die $!;
     is(run_capture("$tmp/standalone-createrepo.log", 'createrepo_c', $dest), 0,
-        'create metadata for the mixed-signer repository');
+        'create metadata for the build-signed repository');
     is(run_capture("$tmp/standalone-sign.log", 'gpg', '--homedir', $homes{build}, '--batch', '--yes',
         '--armor', '--detach-sign', '--default-key', $keys{build}, "$dest/repodata/repomd.xml"), 0,
         'sign repository metadata with the build key');
     my @verify = ($^X, $owner, '--repo-root', $root, '--target', $target,
         '--verify-repo', $dest, '--gpg-home', $homes{build}, '--gpg-key-name', $keys{build});
     is(run_capture("$tmp/standalone-valid.log", @verify), 0,
-        'standalone native verification accepts each declared signing authority')
+        'standalone native verification accepts a publisher package re-signed with the build key')
         or diag(read_binary("$tmp/standalone-valid.log"));
-    my $resigned = signed_copy($rpm{'publisher-package'}, 'publisher-build-signer', 'build');
-    copy($resigned, $publisher) or die $!;
-    isnt(run_capture("$tmp/standalone-resigned.log", @verify), 0,
-        'standalone verification rejects a publisher package signed by the build key');
-    like(read_binary("$tmp/standalone-resigned.log"), qr/SHA256 mismatch/,
-        'the publisher failure identifies the changed pinned bytes');
     copy($signed{'publisher-package'}, $publisher) or die $!;
+    isnt(run_capture("$tmp/standalone-publisher-key.log", @verify), 0,
+        'standalone verification rejects a publisher package that keeps the publisher signature');
+    like(read_binary("$tmp/standalone-publisher-key.log"), qr/publisher-package.*(?:NOKEY|WRONGKEY)/,
+        'the publisher failure names the package and its signer mismatch');
+    copy($resigned, $publisher) or die $!;
     my $wrong_generated = signed_copy($rpm{'native-child'}, 'generated-publisher-signer', 'publisher');
     copy($wrong_generated, $child) or die $!;
     isnt(run_capture("$tmp/standalone-wrong-generated.log", @verify), 0,
@@ -235,7 +235,7 @@ for my $case (['publisher-elf', qr/ELF payload/], ['publisher-arch', qr/not a no
         'the generated output failure identifies the unexpected signer');
     copy($generated, $child) or die $!;
     is(run_capture("$tmp/standalone-restored.log", @verify), 0,
-        'restoring both original package signatures restores standalone acceptance');
+        'restoring both build signatures restores standalone acceptance');
     ok(!-f $ENV{NATIVE_CALLS}, 'standalone verification runs no downloader or builder');
 }
 
@@ -338,23 +338,23 @@ SKIP: {
         my $publisher = "$dest/publisher-package-1-1.oe2403.noarch.rpm";
         if ($scenario eq 'success' || $scenario eq 'patch-path') {
             is($rc, 0, 'whole owner signs and collects the completed native chain') or diag(read_binary("$tmp/owner-$scenario.log"));
-            is(-f $publisher ? digest_file($publisher) : '', digest_file($signed{'publisher-package'}), 'final publisher package remains byte-identical');
+            my $digests = sub { capture_command('rpm', '-qp', '--nosignature', '--qf', '%{SHA256HEADER} %{PAYLOADDIGEST}', $_[0]) };
+            is(-f $publisher ? $digests->($publisher) : '', $digests->($signed{'publisher-package'}),
+                'final publisher package keeps the publisher header and payload');
+            isnt(-f $publisher ? digest_file($publisher) : '', digest_file($signed{'publisher-package'}),
+                'final publisher package carries a new signature');
             ok(-f "$dest/native-child-1-1.oe2403.noarch.rpm", 'dependent native output reaches the repository');
             ok(!-f "$dest/native-leaf-1-1.oe2403.noarch.rpm", 'build-only native prerequisite stays private');
             if ($scenario eq 'success' && $rc == 0) {
                 my @verify = ($^X, $owner, '--repo-root', $root, '--target', $target,
                     '--verify-repo', $dest, '--gpg-home', $homes{build}, '--gpg-key-name', $keys{build});
-                is(run_capture("$tmp/final-verify.log", @verify), 0, 'standalone gate accepts the declared publisher and build signers');
+                is(run_capture("$tmp/final-verify.log", @verify), 0, 'standalone gate accepts the build signer on every package');
                 copy($publisher, "$tmp/publisher-preserved.rpm") or die $!;
-                {
-                    local $ENV{GNUPGHOME} = $homes{build};
-                    is(run_capture("$tmp/publisher-resign.log", 'rpmsign', '--define', "_gpg_name $keys{build}",
-                        '--define', '__gpg /usr/bin/gpg', '--resign', $publisher), 0, 'negative control re-signs a publisher copy with the build key');
-                }
-                isnt(run_capture("$tmp/final-resigned-publisher.log", @verify), 0, 'collector rejects a re-signed publisher input even with an otherwise allowed key');
-                like(read_binary("$tmp/final-resigned-publisher.log"), qr/SHA256 mismatch/, 'the publisher failure identifies lost byte identity');
+                copy($signed{'publisher-package'}, $publisher) or die $!;
+                isnt(run_capture("$tmp/final-publisher-key.log", @verify), 0, 'collector rejects a publisher package that keeps the publisher signature');
+                like(read_binary("$tmp/final-publisher-key.log"), qr/publisher-package.*(?:NOKEY|WRONGKEY)/,
+                    'the publisher failure names the package and its signer mismatch');
                 copy("$tmp/publisher-preserved.rpm", $publisher) or die $!;
-                is(digest_file($publisher), digest_file($signed{'publisher-package'}), 'restore the original publisher bytes after the negative control');
                 my $generated = "$dest/native-child-1-1.oe2403.noarch.rpm";
                 copy($generated, "$tmp/generated-preserved.rpm") or die $!;
                 {

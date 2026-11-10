@@ -1341,7 +1341,8 @@ sub deploy_target {
         # rpm an earlier layout left in the collection. On the STAGE, so the published cell is
         # already correct when it is swapped in.
         remove_genesis_packages($stage, 0) if $genesis_release;
-        sign_and_index_repo($stage, $NATIVE_PLANS{$tgt});
+        # The deploy gate accepts only the build key, so a published publisher RPM carries it too.
+        sign_and_index_repo($stage, $NATIVE_PLANS{$tgt}, resign_publishers => 1);
         write_dep_repo_metadata($stage, $rel, $tarch, $subdir);
         # Automatic completeness + signature gate on the freshly signed cell -- the single
         # consolidated gate (verify_target_repo, the same one --verify-repo runs). Asserts every
@@ -1514,11 +1515,11 @@ sub createrepo_c_cmd {
 }
 
 sub sign_and_index_repo {
-    my ($dir, $native) = @_;
+    my ($dir, $native, %extra) = @_;
     return MockBuildUtils::sign_and_index_repo($dir, $native,
         gpg_sign => $gpg_sign, gpg_home => $gpg_home,
         gpg_key_name => $gpg_key_name, gpg_program => $gpg_program,
-        source_date_epoch => $SOURCE_DATE_EPOCH, run => \&run_simple);
+        source_date_epoch => $SOURCE_DATE_EPOCH, run => \&run_simple, %extra);
 }
 
 sub write_dep_repo_metadata {
@@ -2138,7 +2139,6 @@ sub verify_target_repo {
     my %MAN = read_manifest($manifest);
     my %req = %{ $MAN{$tgt} // {} };
     die "FATAL: no manifest section for target '$tgt' in $manifest\n" if !%req;
-    my $native;
     # The WHOLE manifest, deliberately -- the --skip-* flags are NOT applied here. They say what
     # this INVOCATION built; they never say what the verified repository may be missing. Honouring
     # them let a repo with no xCAT-genesis-base pass whenever the verifying run happened to carry
@@ -2153,7 +2153,7 @@ sub verify_target_repo {
     my %expected = map { $_ => $req{$_} } @names;
     my @problems = verify_repo_packages(\%expected, \%present, \%present_evr, \&rpm_vercmp_segment);
     if ($tgt eq 'openeuler-24.03-ppc64le') {
-        eval { $native = load_inputs($repo_root, \%req); 1 }
+        eval { load_inputs($repo_root, \%req); 1 }
             or push @problems, "Native input catalog: $@";
     }
 
@@ -2183,7 +2183,8 @@ sub verify_target_repo {
             require_command('rpm');
             # (a) RPM-native crypto verification: rpmkeys --checksig against an isolated keyring
             # holding only this key verifies every rpm's digests AND that the signature is by the key.
-            push @problems, verify_rpms_checksig($dir, $gpg_key_name, $gpg_home, $native);
+            # Publisher RPMs carry the build key here, so no publisher exemption applies.
+            push @problems, verify_rpms_checksig($dir, $gpg_key_name, $gpg_home);
             # (b) Explicit signer-id origin check kept alongside: assert each rpm's header signature
             # key id is one of this key's ids (primary/subkey).
             my $accept = gpg_key_ids($gpg_key_name, $gpg_home);
@@ -2191,7 +2192,7 @@ sub verify_target_repo {
                 push @problems, "SIGKEY: cannot list key ids for '$gpg_key_name' to verify per-rpm signatures";
             } else {
                 my @rpm_sigs = map { [ basename($_), rpm_signer_keyid($_) ] }
-                               grep { !/\.src\.rpm$/ && (!$native || !native_publisher_rpm($native, $_)) } glob("$dir/*.rpm");
+                               grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
                 push @problems, verify_rpm_signatures(\@rpm_sigs, $accept);
             }
         }
@@ -2210,13 +2211,6 @@ sub verify_target_repo {
     print "[verify-repo] $tgt complete: " . scalar(@names)
         . " required packages present + EVR-satisfied, repomd + every rpm checksig-verified, in $dir\n";
     return 1;
-}
-
-sub native_publisher_rpm {
-    my ($plan, $rpm) = @_;
-    my $id = rpm_identity($rpm);
-    my $owner = $plan->{outputs}{$id->{name}} // return 0;
-    return $plan->{nodes}{$owner}{type} eq 'publisher';
 }
 
 sub reset_staging_repo {

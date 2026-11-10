@@ -643,10 +643,29 @@ sub createrepo_c_cmd {
         . sh_quote($dir);
 }
 
+#--------------------------------------------------------------------------
+
+=head3 sign_and_index_repo
+
+    Descriptions:
+        Sign the binary RPMs in a directory, index it with createrepo_c and sign repomd.xml.
+        With a native plan, a publisher RPM must match its pinned digest before any command runs.
+    Arguments:
+        $dir:     the repository directory
+        $native:  the native input plan, or undef
+        %options: run, gpg_sign, gpg_home, gpg_key_name, gpg_program, source_date_epoch, and
+                  resign_publishers: replace the publisher signature with the build key
+    Returns:
+        nothing; dies on a failed check
+
+=cut
+
+#--------------------------------------------------------------------------
 sub sign_and_index_repo {
     my ($dir, $native, %options) = @_;
     my $run = $options{run} // die "Repository signing requires a command runner\n";
     my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
+    my @publishers;
     if ($native) {
         require XCAT::NativeInputs;
         require XCAT::BuildUtils;
@@ -658,17 +677,21 @@ sub sign_and_index_repo {
             if ($node->{type} eq 'publisher') {
                 die "Publisher input changed before signing: $rpm\n"
                     unless XCAT::BuildUtils::digest_file($rpm) eq $node->{sha256};
+                push @publishers, $rpm;
             } else {
                 push @built, $rpm;
             }
         }
         @rpms = @built;
     }
-    if ($options{gpg_sign} && @rpms) {
+    my $resign = $options{resign_publishers} && @publishers;
+    if ($options{gpg_sign} && (@rpms || $resign)) {
         local $ENV{GNUPGHOME} = $options{gpg_home} if $options{gpg_home};
-        $run->('rpmsign --define ' . sh_quote("%_gpg_name $options{gpg_key_name}")
-            . ' --define ' . sh_quote("%__gpg $options{gpg_program}") . ' --addsign '
-            . join(' ', map { sh_quote($_) } @rpms));
+        my $sign = 'rpmsign --define ' . sh_quote("%_gpg_name $options{gpg_key_name}")
+            . ' --define ' . sh_quote("%__gpg $options{gpg_program}");
+        $run->("$sign --addsign " . join(' ', map { sh_quote($_) } @rpms)) if @rpms;
+        # rpm 4.19 --addsign refuses an RPM that carries a signature by another key.
+        $run->("$sign --resign " . join(' ', map { sh_quote($_) } @publishers)) if $resign;
     }
     $run->(createrepo_c_cmd($dir, $options{source_date_epoch}));
     if ($options{gpg_sign}) {
@@ -677,7 +700,7 @@ sub sign_and_index_repo {
         unlink "$repomd.asc" if -f "$repomd.asc";
         $run->("gpg -a --detach-sign --default-key " . sh_quote($options{gpg_key_name}) . ' ' . sh_quote($repomd));
         $run->("gpg -a --export " . sh_quote($options{gpg_key_name}) . " > " . sh_quote("$repomd.key"));
-        if ($native) {
+        if ($native && !$options{resign_publishers}) {
             $run->('cat ' . sh_quote($native->{publisher_key}) . ' >> ' . sh_quote("$repomd.key"));
         }
     }

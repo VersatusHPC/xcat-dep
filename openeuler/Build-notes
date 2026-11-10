@@ -16,7 +16,9 @@ isolation. POWER GA has no published Everything, update, or EPOL architecture
 repository. Individual GA noarch inputs are pinned from the publisher's other
 architecture repositories. Each must have a noarch header, a GA release suffix,
 a valid publisher signature, and no ELF file anywhere in its RPM payload.
-They retain their original bytes and signatures in the resulting repository.
+The private prerequisite repository keeps their original bytes and signatures.
+The published repository carries them re-signed with the build key, after a
+check against the pinned sha256. The header and payload do not change.
 
 Run the existing owner through actual sudo from UID1000. The native Mock 2.2
 entry at /usr/libexec/mock/mock must precede consolehelper's /usr/bin/mock in
@@ -45,10 +47,11 @@ before acquisition because those phases cannot honor them. Patches and
 definitions use that same source path. Native results remain
 unsigned under native-results; signed copies populate native-prerequisites.
 Private configuration overlays bind that repository into subsequent Mock
-roots. Their paths and hashes are recorded in native-overlays.json. Publisher
-RPMs retain their publisher signatures; generated RPMs require the selected
-build signing key. Repository metadata is signed by the build key and exports
-both public keys. Neither key is imported into the builder's system RPMDB.
+roots. Their paths and hashes are recorded in native-overlays.json. In that
+repository, publisher RPMs keep their publisher signatures and generated RPMs
+require the selected build signing key. Its metadata is signed by the build key
+and exports both public keys. The published repository exports only the build
+key. Neither key is imported into the builder's system RPMDB.
 
 Native Mock's procenv plugin requires a procenv package that GA OS lacks.
 The procenv source is therefore built first with only that diagnostic plugin
