@@ -1179,7 +1179,11 @@ sub source_rpm_build_command {
         print {$fh} "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$SOURCE_DATE_EPOCH'\n";
         close $fh or die "Cannot close $cfg: $!\n";
     }
-    my $mock = join(' ', map { sh_quote($_) } MockBuildUtils::source_rpm_mock_argv($cfg, $uniqueext, $builder));
+    my $mock = join(' ', 'mock', '-r', sh_quote($cfg), '--uniqueext', sh_quote($uniqueext),
+        '--define', sh_quote('use_source_date_epoch_as_buildtime 1'),
+        '--define', sh_quote('clamp_mtime_to_source_date_epoch 1'),
+        '--define', sh_quote('_buildhost xcat-build'));
+    $mock .= join('', map { ' --define ' . sh_quote($_) } @{$builder->{defines} // []});
     my $srpm = sh_quote($builder->{srpm});
     my $prefix = '';
     if ($RELEASE_BUMP ne '' || @{$builder->{patches} // []} || @{$builder->{defines} // []}) {
@@ -1272,8 +1276,7 @@ sub build_native_inputs {
         make_native_path($plan, "$work/native-results") unless $dry_run;
         my $log = "$logs/native/$name";
         my $uniqueext = build_mock_uniqueext("$target-$run_id", ++$sequence, $name);
-        my %builder = (%$node, native_prerequisite => 1,
-            srpm => $node->{staged} // "$work/native-inputs/$name/" . basename($node->{url}));
+        my %builder = (%$node, srpm => $node->{staged} // "$work/native-inputs/$name/" . basename($node->{url}));
         my $command = source_rpm_build_command(\%builder, $target, $uniqueext, $result, $log,
             "$work/native-source/$name");
         run_step(step => "Build native prerequisite: $name", log => "$log/run.log",
