@@ -29,7 +29,7 @@ our @EXPORT_OK = qw(
     packaged_path
     make_traversable_path epel_target_profile epel_cell_path cell_lock_path
     perl_buildreq_compat_needed perl_buildreq_compat_spec perl_mock_cfg_text
-    native_owner_command NATIVE_BUILD_GID
+    native_owner_command NATIVE_BUILD_GID source_rpm_mock_argv
     openeuler_build_target openeuler_repo_subdir
     goconserver_needs_pinned_go goconserver_pinned_go_buildrequires
     host_build_payload_compressor
@@ -197,6 +197,31 @@ sub native_owner_command {
         . ' && exec sh -c ' . sh_quote($command);
     return 'unshare --mount --propagation private -- setpriv --regid ' . NATIVE_BUILD_GID
         . ' --clear-groups -- sh -c ' . sh_quote($script);
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 source_rpm_mock_argv
+
+    Descriptions:
+        The mock argv that rebuilds a source RPM builder, without the action and its operands.
+    Arguments:
+        $cfg: the mock configuration file.
+        $uniqueext: the mock --uniqueext value.
+        $builder: the builder hash. Reads defines.
+    Returns:
+        A list of words, not shell quoted.
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub source_rpm_mock_argv {
+    my ($cfg, $uniqueext, $builder) = @_;
+    return ('mock', '-r', $cfg, '--uniqueext', $uniqueext,
+        '--define', 'use_source_date_epoch_as_buildtime 1',
+        '--define', 'clamp_mtime_to_source_date_epoch 1',
+        '--define', '_buildhost xcat-build',
+        map { ('--define', $_) } @{$builder->{defines} // []});
 }
 
 # print_step: print a step banner.

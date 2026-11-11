@@ -1179,11 +1179,7 @@ sub source_rpm_build_command {
         print {$fh} "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$SOURCE_DATE_EPOCH'\n";
         close $fh or die "Cannot close $cfg: $!\n";
     }
-    my $mock = join(' ', 'mock', '-r', sh_quote($cfg), '--uniqueext', sh_quote($uniqueext),
-        '--define', sh_quote('use_source_date_epoch_as_buildtime 1'),
-        '--define', sh_quote('clamp_mtime_to_source_date_epoch 1'),
-        '--define', sh_quote('_buildhost xcat-build'));
-    $mock .= join('', map { ' --define ' . sh_quote($_) } @{$builder->{defines} // []});
+    my $mock = join(' ', map { sh_quote($_) } MockBuildUtils::source_rpm_mock_argv($cfg, $uniqueext, $builder));
     my $srpm = sh_quote($builder->{srpm});
     my $prefix = '';
     if ($RELEASE_BUMP ne '' || @{$builder->{patches} // []} || @{$builder->{defines} // []}) {
