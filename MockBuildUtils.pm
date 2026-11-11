@@ -208,7 +208,7 @@ sub native_owner_command {
     Arguments:
         $cfg: the mock configuration file.
         $uniqueext: the mock --uniqueext value.
-        $builder: the builder hash. Reads defines.
+        $builder: the builder hash. Reads defines and native_prerequisite.
     Returns:
         A list of words, not shell quoted.
 
@@ -217,7 +217,10 @@ sub native_owner_command {
 #-------------------------------------------------------------------------------
 sub source_rpm_mock_argv {
     my ($cfg, $uniqueext, $builder) = @_;
+    # A native prerequisite is a distro source RPM, rebuilt only as a build input. Its %check
+    # suite tests the distro package, and the ksh timing tests in it fail at random on ppc64le.
     return ('mock', '-r', $cfg, '--uniqueext', $uniqueext,
+        ($builder->{native_prerequisite} ? ('--nocheck') : ()),
         '--define', 'use_source_date_epoch_as_buildtime 1',
         '--define', 'clamp_mtime_to_source_date_epoch 1',
         '--define', '_buildhost xcat-build',

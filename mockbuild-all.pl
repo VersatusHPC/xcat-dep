@@ -1272,7 +1272,8 @@ sub build_native_inputs {
         make_native_path($plan, "$work/native-results") unless $dry_run;
         my $log = "$logs/native/$name";
         my $uniqueext = build_mock_uniqueext("$target-$run_id", ++$sequence, $name);
-        my %builder = (%$node, srpm => $node->{staged} // "$work/native-inputs/$name/" . basename($node->{url}));
+        my %builder = (%$node, native_prerequisite => 1,
+            srpm => $node->{staged} // "$work/native-inputs/$name/" . basename($node->{url}));
         my $command = source_rpm_build_command(\%builder, $target, $uniqueext, $result, $log,
             "$work/native-source/$name");
         run_step(step => "Build native prerequisite: $name", log => "$log/run.log",
