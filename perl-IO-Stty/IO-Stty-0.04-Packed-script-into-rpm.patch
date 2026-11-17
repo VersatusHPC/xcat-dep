@@ -1,0 +1,11 @@
+diff -up IO-Stty-0.04/Makefile.PL.orig IO-Stty-0.04/Makefile.PL
+--- IO-Stty-0.04/Makefile.PL.orig	2020-01-20 16:31:33.791481727 +0100
++++ IO-Stty-0.04/Makefile.PL	2020-01-20 16:32:49.723884669 +0100
+@@ -15,6 +15,7 @@ WriteMakefile(
+     },
+     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
+     clean               => { FILES => 'IO-Stty-*' },
++    EXE_FILES   => [ 'scripts/stty.pl' ],
+     META_MERGE  => {
+         build_requires => {
+             'Test::More' => 0,  # For testing

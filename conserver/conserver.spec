@@ -40,8 +40,8 @@ bells and whistles to accentuate that basic functionality.
 %prep
 %{__rm} -rf %{buildroot}
 %setup -n %{pkg}-%{ver}
-%patch0 -p1
-%patch1 -p1
+%patch -P 0 -p1
+%patch -P 1 -p1
 
 
 %build

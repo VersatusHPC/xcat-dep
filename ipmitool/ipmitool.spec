@@ -61,26 +61,26 @@ if [ "$RPM_BUILD_ROOT" ] && [ "$RPM_BUILD_ROOT" != "/" ]; then
 fi
 
 %setup -n ipmitool-%{version}
-%patch1  -p1
-%patch2  -p1
-%patch3  -p1
-%patch4  -p1
-%patch5  -p1
-%patch6  -p1
-%patch7  -p1
-%patch8  -p1
-%patch9  -p1
-%patch10  -p1
-%patch11  -p1
-%patch12  -p1
-%patch13  -p1
-%patch14  -p1
-%patch15  -p1
-%patch16  -p1
-%patch17  -p1
-%patch80 -p1
-%patch82 -p1
-%patch83 -p1
+%patch -P 1  -p1
+%patch -P 2  -p1
+%patch -P 3  -p1
+%patch -P 4  -p1
+%patch -P 5  -p1
+%patch -P 6  -p1
+%patch -P 7  -p1
+%patch -P 8  -p1
+%patch -P 9  -p1
+%patch -P 10  -p1
+%patch -P 11  -p1
+%patch -P 12  -p1
+%patch -P 13  -p1
+%patch -P 14  -p1
+%patch -P 15  -p1
+%patch -P 16  -p1
+%patch -P 17  -p1
+%patch -P 80 -p1
+%patch -P 82 -p1
+%patch -P 83 -p1
 
 for f in AUTHORS ChangeLog; do
     iconv -f iso-8859-1 -t utf8 < ${f} > ${f}.utf8

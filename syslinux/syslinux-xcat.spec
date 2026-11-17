@@ -70,7 +70,7 @@ booting in the /opt/xcat/share/xcat/netboot/syslinux directory.
 
 %prep
 %setup -q -n syslinux-%{VERSION}
-%patch0 -p1
+%patch -P 0 -p1
 # Source tarballs do not include .git metadata; skip submodule refresh in that case.
 sed -i 's/^[[:space:]]*git submodule update --init$/[ -d .git ] \&\& git submodule update --init || :/' efi/clean-gnu-efi.sh
 # GCC/glibc compatibility for major()/minor() declarations.
