@@ -27,11 +27,13 @@ ok($label,   'MockBuildUtils names a cell');
 
 # The cell is sles<SLE MAJOR>/<arch>, and the SLE major is not the Leap major. Leap 15.6 carries
 # SLE 15 SP6's base and Leap 42.3 carries SLE 12 SP3's, so 42.3 publishes into sles12. That is the
-# directory xcat.org serves and the one cells.tsv gives the sles12 cell.
+# directory xcat.org serves and the one cells.tsv gives the sles12 cell. Leap 16.0 carries SLE 16.0 and
+# publishes into sles16.
 my %cell = (
     'opensuse-leap-15.6-x86_64'  => 'sles15/x86_64',
     'opensuse-leap-15.6-ppc64le' => 'sles15/ppc64le',
     'opensuse-leap-42.3-x86_64'  => 'sles12/x86_64',
+    'opensuse-leap-16.0-x86_64'  => 'sles16/x86_64',
 );
 
 subtest 'an openSUSE target yields a profile' => sub {
