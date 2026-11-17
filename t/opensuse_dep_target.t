@@ -129,4 +129,26 @@ subtest 'Leap 42.3 ships its own mock configuration' => sub {
         '... and not from the live mirror, which answers 404 for 42.3');
 };
 
+# The stock Leap 16.0 mock configuration verifies packages with the ALP-Main key from
+# distribution-gpg-keys, and rpm-sequoia rejects that copy: "No binding signature". The build
+# uses an xCAT overlay that points dnf at the copy openSUSE publishes beside the repository.
+subtest 'a Leap release the stock mock configuration cannot build uses the xCAT overlay' => sub {
+    plan skip_all => 'MockBuildUtils has no target_profile' unless $profile;
+    my $p16 = $profile->('opensuse-leap-16.0-x86_64', 'x86_64');
+    is($p16->{mock_cfg}, 'opensuse-leap-16.0-x86_64-xcat', 'Leap 16.0 builds through the xCAT overlay');
+    is($p16->{noarch_cfg}, $p16->{mock_cfg}, '... for its noarch packages too');
+    my $overlay = "$RealBin/../mock-configs/$p16->{mock_cfg}.cfg";
+    ok(-f $overlay, "mock-configs/ ships $p16->{mock_cfg}.cfg") or return;
+    open my $fh, '<', $overlay or die "cannot read $overlay: $!\n";
+    my $text = do { local $/; <$fh> };
+    close $fh;
+    like($text, qr{^include\('/etc/mock/opensuse-leap-16\.0-x86_64\.cfg'\)$}m,
+        '... which starts from the stock configuration');
+    like($text, qr{\Qreplace('file:///usr/share/distribution-gpg-keys/suse/RPM-GPG-KEY-SuSE-ALP-Main', 'https://download.opensuse.org/distribution/leap/16.0/repo/oss/gpg-pubkey-09d9ea69-68595a8c.asc')\E},
+        '... and replaces the rejected key with the published copy');
+    my $p15 = $profile->('opensuse-leap-15.6-x86_64', 'x86_64');
+    is($p15->{mock_cfg} // 'opensuse-leap-15.6-x86_64', 'opensuse-leap-15.6-x86_64',
+        'Leap 15.6 keeps the stock configuration');
+};
+
 done_testing();
