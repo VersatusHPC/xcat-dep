@@ -24,7 +24,7 @@ BuildRequires: perl(ExtUtils::MakeMaker)
 # Crypt::IDEA is unavailable due to patents
 %if 0%{!?perl_bootstrap:1}
 BuildRequires: perl(Crypt::DES)
-%if ! (0%{?rhel} >= 7)
+%if ! (0%{?rhel} >= 7 || 0%{?suse_version} >= 1600)
 BuildRequires: perl(Crypt::Blowfish)
 BuildRequires: perl(Crypt::Blowfish_PP)
 BuildRequires: perl(Crypt::Rijndael)
