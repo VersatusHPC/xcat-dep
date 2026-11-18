@@ -50,6 +50,8 @@ f="conserver/Makefile.in"
 %{__mv} $f $f.orig
 %{__sed} -e 's/^.*conserver\.rc.*$//' < $f.orig > $f
 
+# GCC 15 defaults to C23, where true is a keyword; conserver declares a variable named true.
+export CFLAGS="${RPM_OPT_FLAGS} -std=gnu11"
 %configure --with-master=%{master} --with-openssl
 make
 
