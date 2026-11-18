@@ -151,4 +151,13 @@ subtest 'a Leap release the stock mock configuration cannot build uses the xCAT 
         'Leap 15.6 keeps the stock configuration');
 };
 
+# Leap 16.0 ships no perl-Crypt-CBC, which xCAT-server requires, so its dep repository carries it.
+subtest 'the Leap 16.0 dep repository carries what Leap 16.0 does not ship' => sub {
+    my %m = MockBuildUtils::read_manifest("$RealBin/../packages-manifest.conf");
+    ok(exists $m{'opensuse-leap-16.0-x86_64'}{'perl-Crypt-CBC'},
+        'the Leap 16.0 manifest pins perl-Crypt-CBC');
+    ok(!exists $m{'opensuse-leap-15.6-x86_64'}{'perl-Crypt-CBC'},
+        'Leap 15.6 takes perl-Crypt-CBC from its own repository');
+};
+
 done_testing();
