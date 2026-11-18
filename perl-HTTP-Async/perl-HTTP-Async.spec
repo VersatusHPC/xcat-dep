@@ -41,8 +41,8 @@ using 'select' lists.
 
 # Use the explicit -P form so the patch applies on EL8 (rpm 4.14) and EL9
 # (rpm 4.16), EL10 (rpm 4.19), and openSUSE Leap 15 (rpm 4.14). The bare-number
-# "%patch 0" form is only understood by rpm >= 4.18 and fails older rpm with
-# "%patch without corresponding Patch: tag".
+# "%%patch 0" form is only understood by rpm >= 4.18 and fails older rpm with
+# "%%patch without corresponding Patch: tag".
 %patch -P 0 -p1
 
 # openSUSE's brp-compress gzips man pages after the install file list is built,

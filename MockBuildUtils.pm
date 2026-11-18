@@ -402,6 +402,10 @@ sub parse_pin {
 # no SLE config, because SLE repositories need a subscription, so each cell is built in the
 # openSUSE counterpart of its family. The SLE major is not the Leap major: Leap 15.6 carries SLE
 # 15 SP6's base, and Leap 42.3 carries SLE 12 SP3's -- rpm 4.11.2, perl 5.18.2, glibc 2.22.
+# A Leap release whose stock mock configuration cannot build. mock-configs/<target>-xcat.cfg
+# includes the stock one and corrects it.
+my %LEAP_MOCK_OVERLAY = map { $_ => 1 } qw(16.0);
+
 my %LEAP_SLE_MAJOR = (
     '42.3' => 12,
     '15.6' => 15,
@@ -1153,11 +1157,13 @@ sub target_profile {
         my $rel = $LEAP_SLE_MAJOR{$leap}
             or die "openSUSE target '$target' names no SLE family: add Leap $leap to"
                  . " %LEAP_SLE_MAJOR\n";
+        my $mock_cfg = $LEAP_MOCK_OVERLAY{$leap} ? "$target-xcat" : $target;
         return {
             rel          => $rel,
             arch         => $arch,
             cell         => "sles$rel/$arch",
-            noarch_cfg   => $target,
+            mock_cfg     => $mock_cfg,
+            noarch_cfg   => $mock_cfg,
             forcearch    => 0,
             epel         => 0,
             dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],

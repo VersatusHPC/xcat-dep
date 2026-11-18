@@ -700,7 +700,9 @@ if (!$skip_build && !$skip_xcat_dep) {
     }
 }
 
-install_mock_cfg($target);
+# The mock configuration the builders use. It is the target, unless the target needs an overlay.
+my $mock_target = $profile->{mock_cfg} // $target;
+install_mock_cfg($mock_target);
 
 if ($native) {
     my ($runtime, $sources) = build_native_inputs($native, $target, \%req, $run_root, $log_root);
@@ -711,14 +713,14 @@ if ($native) {
 if ($scrub_all_chroots) {
     run_step(
         step => "Scrub all chroots for target $target",
-        cmd  => "mock -r " . shell_quote($target) . " --scrub=all",
+        cmd  => "mock -r " . shell_quote($mock_target) . " --scrub=all",
         log  => "$log_root/scrub-all-chroots.log",
     );
     run_step(
         step => "Scrub all chroots for noarch config $profile->{noarch_cfg}",
         cmd  => "mock -r " . shell_quote($profile->{noarch_cfg}) . " --scrub=all",
         log  => "$log_root/scrub-all-chroots-noarch.log",
-    ) if $profile->{noarch_cfg} ne $target;
+    ) if $profile->{noarch_cfg} ne $mock_target;
 }
 
 if (!$skip_build) {
@@ -743,7 +745,7 @@ if (!$skip_build) {
             my $step_log    = "$log_root/$name";
             make_native_path($native, $step_result) if $native && !$dry_run;
             my $step_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, $name);
-            my $mock_cfg = $builder->{noarch} ? $profile->{noarch_cfg} : $target;
+            my $mock_cfg = $builder->{noarch} ? $profile->{noarch_cfg} : $mock_target;
             my $cmd = $builder->{srpm}
                 ? source_rpm_build_command($builder, $target, $step_uniqueext, $step_result, $step_log,
                     "$run_root/source-rpms/$name")
@@ -788,7 +790,7 @@ if (!$skip_build) {
         # oversubscribes the host.
         my $cmd = join(' ',
             'perl', sh_quote($perl_builder),
-            '--mock-cfg', sh_quote($target),
+            '--mock-cfg', sh_quote($mock_target),
             ($profile->{forcearch}
                 ? ('--target-arch', sh_quote($arch), '--noarch-mock-cfg', sh_quote($profile->{noarch_cfg}))
                 : ()),

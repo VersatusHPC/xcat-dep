@@ -27,11 +27,13 @@ ok($label,   'MockBuildUtils names a cell');
 
 # The cell is sles<SLE MAJOR>/<arch>, and the SLE major is not the Leap major. Leap 15.6 carries
 # SLE 15 SP6's base and Leap 42.3 carries SLE 12 SP3's, so 42.3 publishes into sles12. That is the
-# directory xcat.org serves and the one cells.tsv gives the sles12 cell.
+# directory xcat.org serves and the one cells.tsv gives the sles12 cell. Leap 16.0 carries SLE 16.0 and
+# publishes into sles16.
 my %cell = (
     'opensuse-leap-15.6-x86_64'  => 'sles15/x86_64',
     'opensuse-leap-15.6-ppc64le' => 'sles15/ppc64le',
     'opensuse-leap-42.3-x86_64'  => 'sles12/x86_64',
+    'opensuse-leap-16.0-x86_64'  => 'sles16/x86_64',
 );
 
 subtest 'an openSUSE target yields a profile' => sub {
@@ -125,6 +127,37 @@ subtest 'Leap 42.3 ships its own mock configuration' => sub {
         '... and its updates from the same archive');
     unlike($text, qr{baseurl=\S*download\.opensuse\.org/distribution/leap/42\.3},
         '... and not from the live mirror, which answers 404 for 42.3');
+};
+
+# The stock Leap 16.0 mock configuration verifies packages with the ALP-Main key from
+# distribution-gpg-keys, and rpm-sequoia rejects that copy: "No binding signature". The build
+# uses an xCAT overlay that points dnf at the copy openSUSE publishes beside the repository.
+subtest 'a Leap release the stock mock configuration cannot build uses the xCAT overlay' => sub {
+    plan skip_all => 'MockBuildUtils has no target_profile' unless $profile;
+    my $p16 = $profile->('opensuse-leap-16.0-x86_64', 'x86_64');
+    is($p16->{mock_cfg}, 'opensuse-leap-16.0-x86_64-xcat', 'Leap 16.0 builds through the xCAT overlay');
+    is($p16->{noarch_cfg}, $p16->{mock_cfg}, '... for its noarch packages too');
+    my $overlay = "$RealBin/../mock-configs/$p16->{mock_cfg}.cfg";
+    ok(-f $overlay, "mock-configs/ ships $p16->{mock_cfg}.cfg") or return;
+    open my $fh, '<', $overlay or die "cannot read $overlay: $!\n";
+    my $text = do { local $/; <$fh> };
+    close $fh;
+    like($text, qr{^include\('/etc/mock/opensuse-leap-16\.0-x86_64\.cfg'\)$}m,
+        '... which starts from the stock configuration');
+    like($text, qr{\Qreplace('file:///usr/share/distribution-gpg-keys/suse/RPM-GPG-KEY-SuSE-ALP-Main', 'https://download.opensuse.org/distribution/leap/16.0/repo/oss/gpg-pubkey-09d9ea69-68595a8c.asc')\E},
+        '... and replaces the rejected key with the published copy');
+    my $p15 = $profile->('opensuse-leap-15.6-x86_64', 'x86_64');
+    is($p15->{mock_cfg} // 'opensuse-leap-15.6-x86_64', 'opensuse-leap-15.6-x86_64',
+        'Leap 15.6 keeps the stock configuration');
+};
+
+# Leap 16.0 ships no perl-Crypt-CBC, which xCAT-server requires, so its dep repository carries it.
+subtest 'the Leap 16.0 dep repository carries what Leap 16.0 does not ship' => sub {
+    my %m = MockBuildUtils::read_manifest("$RealBin/../packages-manifest.conf");
+    ok(exists $m{'opensuse-leap-16.0-x86_64'}{'perl-Crypt-CBC'},
+        'the Leap 16.0 manifest pins perl-Crypt-CBC');
+    ok(!exists $m{'opensuse-leap-15.6-x86_64'}{'perl-Crypt-CBC'},
+        'Leap 15.6 takes perl-Crypt-CBC from its own repository');
 };
 
 done_testing();

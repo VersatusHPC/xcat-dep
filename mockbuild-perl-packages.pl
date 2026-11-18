@@ -180,16 +180,14 @@ my %meta = (
         rpm_arch  => 'noarch',
         module    => 'HTTP::Async',
     },
+    # The spec of perl-IO-Stty-0.04-5.fc34.src.rpm, with "%patch -P 0": rpm 4.20 refuses %patch0.
     'perl-IO-Stty' => {
-        mode       => 'srpm',
-        pkg_dir    => "$repo_root/perl-IO-Stty",
-        srpm_globs => [
-            "$repo_root/perl-IO-Stty/perl-IO-Stty-0.04-5.fc34.src.rpm",
-            "$repo_root/perl-IO-Stty/perl-IO-Stty-*.src.rpm",
-        ],
-        rpm_name   => 'perl-IO-Stty',
-        rpm_arch   => 'noarch',
-        module     => 'IO::Stty',
+        mode      => 'spec',
+        pkg_dir   => "$repo_root/perl-IO-Stty",
+        spec      => "$repo_root/perl-IO-Stty/perl-IO-Stty.spec",
+        rpm_name  => 'perl-IO-Stty',
+        rpm_arch  => 'noarch',
+        module    => 'IO::Stty',
     },
     'perl-IO-Tty' => {
         mode      => 'spec',
