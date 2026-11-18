@@ -43,7 +43,10 @@ use XCAT::BuildUtils qw(
   require_command
   run_bounded
   run_command
+  run_with_work_dir
   shell_quote
+  target_run_id
+  work_dir_path
 );
 use XCAT::GenesisRelease qw(
   architectures
@@ -130,6 +133,7 @@ my $skip_tarball = 0;
 my $genesis_release = '';
 my $genesis_release_checksums;
 my $scrub_all_chroots = 0;
+my $keep_work_dir = 0;     # keep /tmp/mockbuild-all-<run_id> after the target finishes
 my $keep_buildroots = 0;   # keep per-step mock chroots after build (default: --scrub=chroot each)
 my $dry_run = 0;
 my @extra_collect_dirs;
@@ -211,6 +215,7 @@ GetOptions(
     'genesis-release=s' => \$genesis_release,
     'scrub-all-chroots!' => \$scrub_all_chroots,
     'keep-buildroots!'  => \$keep_buildroots,
+    'keep-work-dir!'    => \$keep_work_dir,
     'collect-dir=s@'    => \@extra_collect_dirs,
     'dry-run!'          => \$dry_run,
 ) or die usage();
@@ -524,8 +529,14 @@ for my $tgt (@build_targets) {
     restore_signal_mask($previous);
     my $rc = 0;
     eval {
-        my $info = build_one_target($tgt, $run_id, $per_target_builds);
-        deploy_target($tgt, $info);
+        run_with_work_dir(
+            dir  => work_dir_path(target_run_id($tgt, $run_id)),
+            keep => $keep_work_dir,
+            run  => sub {
+                my $info = build_one_target($tgt, $run_id, $per_target_builds);
+                deploy_target($tgt, $info);
+            },
+        );
         1;
     } or do { warn "ERROR: target $tgt failed: $@"; $rc = 1; };
     $tgt_pm->finish($rc);
@@ -546,7 +557,7 @@ sub build_one_target {
     # is the same across targets for a given commit, so a timestamp-only run_id makes
     # different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
     # cross-contaminate. Fold the target into run_id so each target gets its own tree.
-    $run_id = "$target-$run_id" unless index($run_id, $target) >= 0;
+    $run_id = target_run_id($target, $run_id);
     my $profile = target_profile($target);
     my $rel = $profile->{rel};
     $arch = $profile->{arch};
@@ -755,7 +766,7 @@ if (!$skip_build) {
                 '--result-dir', shell_quote($step_result),
                 '--log-dir', shell_quote($step_log),
                 # host-local, run-scoped work dir so /tmp doesn't collide between runs
-                '--work-dir', shell_quote("/tmp/mockbuild-all-$run_id/$name"),
+                '--work-dir', shell_quote(work_dir_path($run_id) . "/$name"),
                 '--build-timestamp', $SOURCE_DATE_EPOCH,
                 ($name eq 'goconserver' ? ('--go-ref', sh_quote($GOCONSERVER_REF)) : ()),
                 # Generated specs need the same release suffix as in-tree specs.
@@ -796,7 +807,7 @@ if (!$skip_build) {
             '--mock-uniqueext', sh_quote($perl_uniqueext),
             '--result-dir', sh_quote($perl_result),
             '--log-dir', sh_quote($perl_log),
-            '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/perl-list6"),
+            '--work-dir', sh_quote(work_dir_path($run_id) . '/perl-list6'),
             '--packages', sh_quote(join(',', @perl_pkgs)),   # manifest: only required perl pkgs
             (($max_build_workers && $max_build_workers >= 1) ? ('--jobs', $max_build_workers) : ()),
             '--build-timestamp', $SOURCE_DATE_EPOCH,
@@ -833,7 +844,7 @@ if (!$skip_build) {
         # buildrpms.pl stages sources in $HOME/rpmbuild (via rpmdev-setuptree). Give each
         # per-target genesis build its own HOME so parallel EL targets don't race on the shared
         # /root/rpmbuild tree (that race is what made concurrent genesis builds fail).
-        my $genesis_home = "/tmp/mockbuild-all-$run_id/genesis-home";
+        my $genesis_home = work_dir_path($run_id) . '/genesis-home';
         # buildrpms.pl's rpmdev-setuptree only runs during env setup, not per build, so create the
         # rpmbuild tree ourselves for this per-target HOME (else $HOME/rpmbuild/SOURCES is missing).
         my $mktree = join(' ', map { sh_quote("$genesis_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
@@ -1713,6 +1724,7 @@ Options:
                           oversubscribing the host. Split evenly across active targets.
                           0/auto = host nproc (default: auto)
   --run-id ID             Run identifier suffix (default: derived from build timestamp)
+  --keep-work-dir         Keep /tmp/mockbuild-all-<run_id> after each target (default: remove it)
   --build-timestamp EPOCH Unix epoch for deterministic builds (default: Gitepoch or git log)
   --skip-build            Skip all build steps and only collect/create repo/tarballs
   --skip-xcat-dep         Skip xcat-dep mockbuild.pl package steps

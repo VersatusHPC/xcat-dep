@@ -7,6 +7,7 @@ use Digest::MD5 ();
 use Digest::SHA ();
 use Exporter qw(import);
 use File::Find qw(find);
+use File::Path qw(remove_tree);
 use File::Slurper qw(read_binary write_binary);
 use File::Spec;
 use IPC::Cmd qw(can_run);
@@ -33,9 +34,12 @@ our @EXPORT_OK = qw(
   require_command
   run_bounded
   run_command
+  run_with_work_dir
   shell_quote
   stall_report
   emulated_build_timeout
+  target_run_id
+  work_dir_path
   write_binary
 );
 
@@ -434,6 +438,69 @@ sub every_step_failed {
     my ($attempted, $failures) = @_;
     return 0 unless $attempted;
     return $failures >= $attempted ? 1 : 0;
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 target_run_id
+
+    Descriptions: the per-target run id. A timestamp-only run id is the same for
+                  every target of one commit, so the target is folded into it.
+    Arguments:    $target, $run_id
+    Returns:      the run id, prefixed with the target unless it already names it
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub target_run_id {
+    my ($target, $run_id) = @_;
+    return index($run_id, $target) >= 0 ? $run_id : "$target-$run_id";
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 work_dir_path
+
+    Descriptions: the host-local work dir of one target run of mockbuild-all.pl.
+    Arguments:    $run_id (per-target), $tmp_root (optional, default /tmp)
+    Returns:      the path of the work dir
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub work_dir_path {
+    my ($run_id, $tmp_root) = @_;
+    $tmp_root //= '/tmp';
+    return "$tmp_root/mockbuild-all-$run_id";
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 run_with_work_dir
+
+    Descriptions: run one target build, then remove its work dir, whether the
+                  build succeeded or failed. The work dir holds only staging;
+                  the tarballs and repos are under the output root.
+    Arguments:    %a: dir (the work dir), keep (true leaves dir in place),
+                  run (coderef that does the build)
+    Returns:      what run returns. A failure of run is rethrown unchanged.
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub run_with_work_dir {
+    my (%a) = @_;
+    my $dir = $a{dir} or die "run_with_work_dir: missing 'dir'\n";
+    my $run = $a{run} or die "run_with_work_dir: missing 'run'\n";
+    my $result;
+    my $ok    = eval { $result = $run->(); 1 };
+    my $error = $@;
+    if (!$a{keep} && -e $dir) {
+        remove_tree($dir, { error => \my $problems });
+        warn "WARN: cannot remove work dir $dir\n" if @{$problems} || -e $dir;
+    }
+    die $error unless $ok;
+    return $result;
 }
 
 sub hashes_equal {
