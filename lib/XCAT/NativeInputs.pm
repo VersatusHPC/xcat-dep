@@ -14,7 +14,8 @@ use File::Temp qw(tempdir);
 use JSON::PP;
 
 our @EXPORT_OK = qw(load_inputs stage_inputs verify_input rpm_identity validate_outputs publisher_trust
-                    trust_dbpath scan_cpio_for_elf native_overlay_text);
+                    trust_dbpath scan_cpio_for_elf native_overlay_text
+                    input_cache_dir fetch_input keep_input prune_input_cache);
 
 sub read_file {
     my ($path) = @_;
@@ -247,11 +248,110 @@ sub publisher_trust {
     return $trust;
 }
 
+#---
+=head3 input_cache_dir
+
+    Descriptions: The host directory that keeps verified native inputs between builds.
+        XCAT_NATIVE_INPUT_CACHE overrides it; an empty value turns the cache off.
+    Arguments: none
+    Returns: a path, or undef when the cache is off
+
+=cut
+#---
+sub input_cache_dir {
+    return $ENV{XCAT_NATIVE_INPUT_CACHE} || undef if exists $ENV{XCAT_NATIVE_INPUT_CACHE};
+    return '/var/cache/xcat-dep/native-inputs';
+}
+
+sub cache_entry {
+    my ($node, $cache) = @_;
+    return "$cache/$node->{sha256}-" . basename($node->{url});
+}
+
+#---
+=head3 fetch_input
+
+    Descriptions: Put the pinned input at $dest, from $cache when an entry there has the
+        pinned SHA256, else from its URL. The caller still verifies $dest.
+    Arguments: $node (url, sha256), $dest, $cache (undef for no cache)
+    Returns: 'cache' or 'download'
+
+=cut
+#---
+sub fetch_input {
+    my ($node, $dest, $cache) = @_;
+    if ($cache) {
+        my $entry = cache_entry($node, $cache);
+        if (-f $entry) {
+            if (sha256($entry) eq $node->{sha256}) {
+                copy($entry, $dest) or die "Cannot copy cached native input $entry: $!\n";
+                # prune_input_cache ages entries by mtime, so a used entry stays.
+                utime(undef, undef, $entry);
+                return 'cache';
+            }
+            unlink $entry;
+        }
+    }
+    # repo.openeuler.org can serve below 100 KB/s, so one download per host, not per build.
+    run('wget', '--https-only', '--tries=3', '--timeout=60', '-O', $dest, $node->{url});
+    return 'download';
+}
+
+#---
+=head3 keep_input
+
+    Descriptions: Copy a verified input into $cache for the next build. A cache that
+        cannot be written is skipped with a warning; the build does not need it.
+    Arguments: $node, $path (verified bytes), $cache (undef for no cache)
+    Returns: nothing
+
+=cut
+#---
+sub keep_input {
+    my ($node, $path, $cache) = @_;
+    return unless $cache;
+    my $entry = cache_entry($node, $cache);
+    return if -f $entry;
+    my $tmp = "$entry.$$.part";
+    # Concurrent builds share the cache. rename() publishes a complete file only.
+    unless (eval { make_path($cache); 1 } && copy($path, $tmp) && rename($tmp, $entry)) {
+        warn "Cannot keep native input in $cache: $!\n";
+        unlink $tmp;
+    }
+}
+
+#---
+=head3 prune_input_cache
+
+    Descriptions: Delete cache entries not used for $days days, and stale partial copies.
+        This keeps the cache to the inputs that current catalogs pin.
+    Arguments: $cache, $days
+    Returns: the list of deleted paths
+
+=cut
+#---
+sub prune_input_cache {
+    my ($cache, $days) = @_;
+    return () unless $cache && -d $cache;
+    opendir(my $dh, $cache) or return ();
+    my @gone;
+    for my $name (readdir $dh) {
+        my $path = "$cache/$name";
+        next unless -f $path;
+        my $limit = $name =~ /\.part\z/ ? 1 : $days;
+        push @gone, $path if -M $path > $limit && unlink $path;
+    }
+    closedir $dh;
+    return @gone;
+}
+
 sub stage_inputs {
     my ($plan, $work) = @_;
     die "Native input staging already exists: $work\n" if -e $work;
     make_path($work);
     my $db = publisher_trust($plan, $work);
+    my $cache = input_cache_dir();
+    prune_input_cache($cache, 30);
     my @ledger;
     for my $name (@{$plan->{order}}) {
         my $node = $plan->{nodes}{$name};
@@ -267,8 +367,9 @@ sub stage_inputs {
             $patch->{staged} = $staged;
         }
         my $dest = "$work/$name/" . basename($node->{url});
-        run('wget', '--https-only', '--tries=3', '--timeout=60', '-O', "$dest.part", $node->{url});
+        fetch_input($node, "$dest.part", $cache);
         verify_input($plan, $node, "$dest.part", $db);
+        keep_input($node, "$dest.part", $cache);
         rename("$dest.part", $dest) or die "Cannot preserve native input: $!\n";
         chmod 0444, $dest or die "Cannot protect native input: $!\n";
         $node->{staged} = $dest;
