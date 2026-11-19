@@ -24,6 +24,7 @@ plan skip_all => 'The fixture builder must be unprivileged' unless defined($buil
 my @rpm_user = $> == 0 ? ('runuser', '-u', $build_user, '--') : ();
 my $parent_pid = $$;
 my $tmp = tempdir(CLEANUP => !$ENV{XCAT_TEST_KEEP});
+$ENV{XCAT_NATIVE_INPUT_CACHE} = "$tmp/input-cache";
 diag("native input fixtures: $tmp");
 my $repo = abs_path("$RealBin/..");
 my $owner = $ENV{XCAT_TEST_COLLECTOR} // "$repo/mockbuild-all.pl";
