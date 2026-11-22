@@ -11,7 +11,8 @@ use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use lib $RealBin, "$RealBin/lib";
 use MockBuildUtils qw(mock_result_dirs make_traversable_path
-                      perl_buildreq_compat_needed perl_buildreq_compat_spec perl_mock_cfg_text);
+                      perl_buildreq_compat_needed perl_buildreq_compat_spec perl_mock_cfg_text
+                      mock_scrub_command);
 
 my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
@@ -360,7 +361,6 @@ run("mock -r " . sh_quote($noarch_mock_cfg) . $mock_uniqueext_opt . " --print-ro
 my @failed;
 my @passed;
 my @summary_lines;
-my @built_roots;   # pkg + mock cfg + uniqueext of every chroot this run made
 
 print_step("Build packages");
 print "parallel jobs: $jobs\n";
@@ -389,7 +389,6 @@ for my $wave (build_waves(\@packages)) {
         # The noarch packages of a forcearch target build in the native chroot, so scrub the
         # chroot the package was actually built in.
         my $pkg_mock_cfg = $cfg->{rpm_arch} eq 'noarch' ? $noarch_mock_cfg : $mock_cfg;
-        push @built_roots, { pkg => $pkg, mock_cfg => $pkg_mock_cfg, uniqueext => $pkg_uniqueext };
 
         my $pid = $pm->start($pkg);
         next if $pid;
@@ -407,34 +406,21 @@ for my $wave (build_waves(\@packages)) {
             release_suffix => $release_suffix,
         );
         unless ($keep_buildroots) {
-            # Reclaim ONLY this package's build chroot here (it's the ~GB disk hog). --scrub=chroot
-            # is uniqueext-local, so it never touches a concurrent sibling. Do NOT --scrub=bootstrap
-            # here: despite the --uniqueext, mock's bootstrap scrub removes the CONFIG-LEVEL shared
-            # bootstrap cache (/var/cache/mock/<cfg>-bootstrap/, keyed by config name, NOT
-            # uniqueext). Doing that mid-batch deletes the cache a still-starting sibling is about to
-            # bind-mount into its own bootstrap root -> `mount rc=32` and a spurious build failure
-            # (observed: perl-Sys-Virt's buildsrpm raced a faster sibling's post-build bootstrap
-            # scrub). The shared bootstrap is reclaimed once below, after ALL workers finish, when
-            # nothing can be binding it.
+            # Reclaim this package's build chroot and bootstrap chroot. mock_scrub_command keeps the
+            # shared bootstrap cache, which a sibling that is still starting binds into its own
+            # bootstrap chroot.
             (my $ps = $pkg) =~ s/[^\w.-]+/-/g;
-            system("mock -r " . sh_quote($pkg_mock_cfg) . " --uniqueext " . sh_quote($pkg_uniqueext)
-                 . " --scrub=chroot > " . sh_quote("$log_dir/scrub-$ps.log") . " 2>&1");
+            my $scrub = eval { mock_scrub_command(cfg => $pkg_mock_cfg, uniqueext => $pkg_uniqueext,
+                                                  scratch => "$work_dir/mock-scrub") };
+            if (defined $scrub) {
+                system("$scrub > " . sh_quote("$log_dir/scrub-$ps.log") . " 2>&1");
+            } else {
+                warn "WARN: chroot scrub skipped for $pkg: $@";
+            }
         }
         $pm->finish($ok ? 0 : 1);
     }
     $pm->wait_all_children;
-}
-
-# Now that every worker has exited, reclaim the per-uniqueext bootstrap roots + the shared
-# config-level bootstrap cache. Serialized and post-join, so no scrub can race a concurrent
-# bind (that race is exactly what the per-package note above avoids). Best-effort: the first
-# scrub drops /var/cache/mock/<cfg>-bootstrap; each also removes its uniqueext bootstrap root.
-unless ($keep_buildroots) {
-    for my $root (@built_roots) {
-        (my $ps = $root->{pkg}) =~ s/[^\w.-]+/-/g;
-        system("mock -r " . sh_quote($root->{mock_cfg}) . " --uniqueext " . sh_quote($root->{uniqueext})
-             . " --scrub=bootstrap >> " . sh_quote("$log_dir/scrub-$ps.log") . " 2>&1");
-    }
 }
 
 for my $pkg (@packages) {

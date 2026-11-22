@@ -17,7 +17,7 @@ our @EXPORT_OK = qw(
     install_deps_packages install_deps_command missing_perl_modules
     sh_quote print_step
     version_matches required_pkgs skipped_builder carry_over_rpms rpm_name rpm_arch rpm_source_rpm
-    source_package rpm_digests_ok mock_bootstrap_cache_dirs mock_scrub_command
+    source_package rpm_digests_ok mock_scrub_command
     have_rpm read_manifest
     derive_target_from_repo_path verify_repo_packages verify_repo_signature verify_rpm_signatures
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
@@ -122,43 +122,39 @@ sub goconserver_needs_pinned_go {
 # every rpm these targets ship, and is what the openSUSE core packages already use.
 #-------------------------------------------------------------------------------
 
-=head3 mock_bootstrap_cache_dirs
-
-    Descriptions: the bootstrap cache directories mock binds into the NEXT package's build.
-                  mock --scrub=bootstrap removes them and does not put them back.
-    Arguments: $cfg  -- the mock configuration name
-               $root -- the cache root. Defaults to XCAT_MOCK_CACHE_ROOT, then
-                        /var/cache/mock. A test runs the builder in a user namespace that
-                        cannot write the host cache, so it points this at its own directory.
-    Returns: the three directory paths, in a stable order
-
-=cut
-
-#-------------------------------------------------------------------------------
-sub mock_bootstrap_cache_dirs {
-    my ($cfg, $root) = @_;
-    $root = $ENV{XCAT_MOCK_CACHE_ROOT} || '/var/cache/mock' unless defined $root and length $root;
-    return map { "$root/$cfg-bootstrap/$_" } qw(dnf_cache root_cache yum_cache);
-}
-
-#-------------------------------------------------------------------------------
-
 =head3 mock_scrub_command
 
     Descriptions: the mock command that removes one build's chroot and its bootstrap chroot.
-    Arguments: %args -- cfg       the mock configuration name
+                  mock --scrub=bootstrap also deletes <cache_topdir>/<root>-bootstrap. That cache
+                  is keyed by the configuration, not by --uniqueext, and every concurrent build
+                  of the configuration binds it. So the scrub reads a private configuration that
+                  includes $cfg and sets cache_topdir in $scratch. mock names the chroots from
+                  the root and the uniqueext, so it removes the same chroots as before.
+    Arguments: %args -- cfg       the mock configuration name, or a path to a .cfg file
                         uniqueext the --uniqueext of the build, or undef
-                        scratch   a directory this build owns
-    Returns: the command line, with no redirection
+                        scratch   a directory this build owns. Created if absent.
+    Returns: the command line, with no redirection. Dies if it cannot write the configuration.
 
 =cut
 
 #-------------------------------------------------------------------------------
 sub mock_scrub_command {
     my (%args) = @_;
-    my $ext = (defined $args{uniqueext} && length $args{uniqueext})
-        ? ' --uniqueext ' . sh_quote($args{uniqueext}) : '';
-    return 'mock -r ' . sh_quote($args{cfg}) . $ext . ' --scrub=chroot --scrub=bootstrap';
+    my ($cfg, $uniqueext, $scratch) = @args{qw(cfg uniqueext scratch)};
+    my $has_ext = defined $uniqueext && length $uniqueext;
+    my $include = $cfg =~ m{/} ? $cfg : "/etc/mock/$cfg.cfg";
+    (my $slug = $has_ext ? "$cfg-$uniqueext" : $cfg) =~ s{[^\w.+-]+}{_}g;
+    my $file  = "$scratch/scrub-$slug.cfg";
+    my $cache = "$scratch/scrub-$slug.cache";
+    for my $path ($include, $cache) {
+        die "mock_scrub_command: cannot quote '$path' for mock\n" if $path =~ /['\\\n]/;
+    }
+    make_path($cache);
+    open my $fh, '>', $file or die "mock_scrub_command: cannot write $file: $!\n";
+    print {$fh} "include('$include')\n", "config_opts['cache_topdir'] = '$cache'\n";
+    close $fh or die "mock_scrub_command: cannot write $file: $!\n";
+    return 'mock -r ' . sh_quote($file) . ($has_ext ? ' --uniqueext ' . sh_quote($uniqueext) : '')
+        . ' --scrub=chroot --scrub=bootstrap';
 }
 
 sub host_build_payload_compressor {

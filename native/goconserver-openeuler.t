@@ -153,10 +153,6 @@ sub run_case {
     local $ENV{SOURCE_DATE_EPOCH};
     delete $ENV{SOURCE_DATE_EPOCH};
     $ENV{SOURCE_DATE_EPOCH} = $options{environment_epoch} if exists $options{environment_epoch};
-    # mockbuild.pl recreates the bootstrap cache mock's scrub removes. The builder runs under
-    # unshare --user, which maps root but leaves the host's /var/cache/mock unwritable, so point
-    # it at a directory of this case's own.
-    local $ENV{XCAT_MOCK_CACHE_ROOT} = "$directory/cache";
     local $ENV{FIXTURE_LOG} = "$directory/commands.jsonl";
     local $ENV{FIXTURE_ARCH} = $options{arch} || 'x86_64';
     local $ENV{FIXTURE_TARGET} = $options{target} || $ENV{FIXTURE_ARCH};
@@ -178,7 +174,6 @@ sub run_case {
     my $log = -f "$directory/commands.jsonl" ? read_text("$directory/commands.jsonl") : '';
     my @commands = map { decode_json($_) } grep { length } split /\n/, $log;
     return { directory => $directory, status => $status, output => read_text("$directory/output"),
-        cache => "$directory/cache",
         spec => -f "$directory/work/goconserver.spec" ? read_text("$directory/work/goconserver.spec") : '',
         commands => \@commands };
 }
@@ -231,11 +226,12 @@ for my $cell (@cells) {
     is(scalar @{calls($case, 'mock', '--rebuild')}, 1, "$config reaches native RPM reconstruction");
     is(read_text("$case->{directory}/results/goconserver-0.3.3-4.$arch.rpm"), "fixture binary RPM\n", "$config collects the build output");
     ok(!-d "$case->{directory}/work/goconserver-src/.git", "$config removes fetched Git metadata from the sources");
-    # mock --scrub=bootstrap takes the shared cache with it and does not put it back, and the
-    # next package in the run binds these three into its own bootstrap.
-    my @restored = grep { -d } MockBuildUtils::mock_bootstrap_cache_dirs($config, $case->{cache});
-    is(scalar @restored, 3, "$config restores all three bootstrap cache directories after the scrub")
-        or diag("present: @restored");
+    # mock --scrub=bootstrap deletes the bootstrap cache of the configuration it reads. A
+    # concurrent build binds the shared one, so the scrub must read the private configuration.
+    my ($scrub) = @{calls($case, 'mock', '--scrub=bootstrap')};
+    my %scrub_opt = $scrub ? @{ $scrub->{args} }[0, 1] : ();
+    like($scrub_opt{'-r'} // '', qr{\A\Q$case->{directory}\E/work/mock-scrub/},
+        "$config scrubs through a private configuration in its work directory");
     build_metadata($case, '2023-11-14T22:13:20Z', $config);
 }
 

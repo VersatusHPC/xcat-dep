@@ -382,26 +382,16 @@ for my $log (qw(build.log root.log state.log)) {
 }
 
 # Reclaim goconserver's own build chroot. mockbuild-all's scrub keys on the TARGET cfg (el$rel), not
-# the el10 build cfg used here, so scrub it ourselves to avoid leaking /var/lib/mock. Best-effort.
-# Scrub BOTH the chroot and its bootstrap: the el10 build cfg is bootstrap-image based, so
-# --scrub=chroot alone leaves the ~190 MiB <cfg>-bootstrap-<uniqueext> tree behind (it accumulated
-# one per target per run in /var/lib/mock -- the disk leak of VersatusHPC/xcat-core#51).
-system(mock_scrub_command(cfg => $build_cfg, uniqueext => $mock_uniqueext, scratch => "$work_dir/mock-scrub")
-       . " >" . sh_quote("$log_dir/mock-scrub.log") . " 2>&1");
-
-# --scrub=bootstrap removes the SHARED /var/cache/mock/<cfg>-bootstrap cache as well as this
-# build's own bootstrap tree, and mock does not put it back. The next package in the run binds
-# that cache into its bootstrap and fails before it compiles anything:
-#
-#   /bin/mount -n -o bind /var/cache/mock/alma+epel-10-x86_64-bootstrap/yum_cache \
-#       /var/lib/mock/alma+epel-10-x86_64-bootstrap-<uniqueext>/root/var/cache/yum
-#
-# mock exits 32 and the step fails. conserver-xcat builds immediately after goconserver, so
-# xcat-dep-build-el10-x86_64 build 143 failed there and took the EL family with it. The
-# directories are recreated rather than the scrub narrowed, because mock knows the order to
-# unmount this build's tree in and removing it by hand is what propagates an unmount to the host.
-foreach my $dir (MockBuildUtils::mock_bootstrap_cache_dirs($build_cfg)) {
-    make_path($dir) unless -d $dir;
+# the el10 build cfg used here, so scrub it here to avoid leaking /var/lib/mock. Best-effort.
+# The el10 build cfg is bootstrap-image based, so --scrub=chroot alone leaves the ~190 MiB
+# <cfg>-bootstrap-<uniqueext> tree behind (the disk leak of VersatusHPC/xcat-core#51).
+# Every EL target builds with the el10 cfg, so the el8 and el9 builds scrub the configuration
+# that a concurrent el10 build uses. mock_scrub_command keeps the shared bootstrap cache.
+my $scrub = eval { mock_scrub_command(cfg => $build_cfg, uniqueext => $mock_uniqueext, scratch => "$work_dir/mock-scrub") };
+if (defined $scrub) {
+    system("$scrub >" . sh_quote("$log_dir/mock-scrub.log") . " 2>&1");
+} else {
+    warn "WARN: chroot scrub skipped: $@";
 }
 
 print_step("Completed");
