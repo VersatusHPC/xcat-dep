@@ -11,7 +11,8 @@ use POSIX qw(strftime);
 use FindBin;
 use lib "$FindBin::Bin/..", "$FindBin::Bin/../lib";
 use MockBuildUtils qw(openeuler_build_target openeuler_repo_subdir
-                      goconserver_needs_pinned_go goconserver_pinned_go_buildrequires);
+                      goconserver_needs_pinned_go goconserver_pinned_go_buildrequires
+                      mock_scrub_command);
 use XCAT::BuildUtils qw(digest_file read_lines);
 
 my $script_dir = abs_path(dirname(__FILE__));
@@ -385,8 +386,8 @@ for my $log (qw(build.log root.log state.log)) {
 # Scrub BOTH the chroot and its bootstrap: the el10 build cfg is bootstrap-image based, so
 # --scrub=chroot alone leaves the ~190 MiB <cfg>-bootstrap-<uniqueext> tree behind (it accumulated
 # one per target per run in /var/lib/mock -- the disk leak of VersatusHPC/xcat-core#51).
-system("mock -r " . sh_quote($build_cfg) . $mock_uniqueext_opt .
-       " --scrub=chroot --scrub=bootstrap >" . sh_quote("$log_dir/mock-scrub.log") . " 2>&1");
+system(mock_scrub_command(cfg => $build_cfg, uniqueext => $mock_uniqueext, scratch => "$work_dir/mock-scrub")
+       . " >" . sh_quote("$log_dir/mock-scrub.log") . " 2>&1");
 
 # --scrub=bootstrap removes the SHARED /var/cache/mock/<cfg>-bootstrap cache as well as this
 # build's own bootstrap tree, and mock does not put it back. The next package in the run binds

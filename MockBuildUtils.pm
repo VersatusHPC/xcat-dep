@@ -17,7 +17,7 @@ our @EXPORT_OK = qw(
     install_deps_packages install_deps_command missing_perl_modules
     sh_quote print_step
     version_matches required_pkgs skipped_builder carry_over_rpms rpm_name rpm_arch rpm_source_rpm
-    source_package rpm_digests_ok mock_bootstrap_cache_dirs
+    source_package rpm_digests_ok mock_bootstrap_cache_dirs mock_scrub_command
     have_rpm read_manifest
     derive_target_from_repo_path verify_repo_packages verify_repo_signature verify_rpm_signatures
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
@@ -139,6 +139,26 @@ sub mock_bootstrap_cache_dirs {
     my ($cfg, $root) = @_;
     $root = $ENV{XCAT_MOCK_CACHE_ROOT} || '/var/cache/mock' unless defined $root and length $root;
     return map { "$root/$cfg-bootstrap/$_" } qw(dnf_cache root_cache yum_cache);
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 mock_scrub_command
+
+    Descriptions: the mock command that removes one build's chroot and its bootstrap chroot.
+    Arguments: %args -- cfg       the mock configuration name
+                        uniqueext the --uniqueext of the build, or undef
+                        scratch   a directory this build owns
+    Returns: the command line, with no redirection
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub mock_scrub_command {
+    my (%args) = @_;
+    my $ext = (defined $args{uniqueext} && length $args{uniqueext})
+        ? ' --uniqueext ' . sh_quote($args{uniqueext}) : '';
+    return 'mock -r ' . sh_quote($args{cfg}) . $ext . ' --scrub=chroot --scrub=bootstrap';
 }
 
 sub host_build_payload_compressor {
