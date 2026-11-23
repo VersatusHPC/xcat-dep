@@ -26,7 +26,7 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_c
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-                      build_mock_uniqueext rpmkeys_checksig_problem
+                      build_mock_uniqueext rpmkeys_checksig_problem mock_scrub_command
                       openeuler_build_target openeuler_repo_subdir);
 # print_step and sh_quote come from MockBuildUtils above; XCAT::BuildUtils carries the same
 # print_step, so it is deliberately NOT imported here (one definition, no redefinition warning).
@@ -860,8 +860,9 @@ if (!$skip_build) {
         # skips) if a concurrent build holds it, but within a run the scrub is sequential before the
         # build and the CD topology never runs a second same-target build at once; `timeout` bounds even
         # a pathological wait so a stale lock can never hang the build.
-        my $genesis_scrub = "{ timeout 300 mock -r " . sh_quote("xCAT-genesis-base-$target")
-            . " --scrub=chroot --scrub=bootstrap >/dev/null 2>&1 || true; }";
+        my $genesis_scrub = "{ timeout 300 " . mock_scrub_command(cfg => "xCAT-genesis-base-$target",
+                scratch => work_dir_path($run_id) . '/mock-scrub')
+            . " >/dev/null 2>&1 || true; }";
         my $cmd = "mkdir -p $mktree && $genesis_scrub && HOME=" . sh_quote($genesis_home) . ' ' . join(' ',
             'perl', sh_quote("$xcat_src/buildrpms.pl"),
             '--package', 'xCAT-genesis-base',
@@ -1814,12 +1815,12 @@ sub run_step {
 sub scrub_buildroot {
     my ($cfg, $uniqueext, $log) = @_;
     return if !defined $cfg || $cfg eq '';
-    my $ext = (defined $uniqueext && $uniqueext ne '')
-        ? ' --uniqueext ' . sh_quote($uniqueext) : '';
+    my $ext = (defined $uniqueext && $uniqueext ne '') ? " --uniqueext $uniqueext" : '';
     eval {
         run_step(
             step => "Scrub chroot $cfg$ext",
-            cmd  => "mock -r " . sh_quote($cfg) . $ext . " --scrub=chroot --scrub=bootstrap",
+            cmd  => mock_scrub_command(cfg => $cfg, uniqueext => $uniqueext,
+                scratch => work_dir_path($run_id) . '/mock-scrub'),
             log  => $log,
         );
         1;
