@@ -400,7 +400,12 @@ sub control_binary_arch {
 #---------------------------------------------------------------------------------------------------
 sub manifest_validation_arches {
     my ($build_arch, $skip_build, $publish, $expect_aref) = @_;
-    return [$build_arch];
+    my %u;
+    # A run that builds nothing staged nothing for its own --arch. It ships the expected set.
+    $u{$build_arch} = 1 unless $skip_build;
+    if ($publish) { $u{$_} = 1 for @{ $expect_aref || [] }; }
+    $u{$build_arch} = 1 unless %u;
+    return [sort keys %u];
 }
 
 # skip_arch_all_on($control_text, $binpkg, $arch): true iff $binpkg is an Architecture:all
