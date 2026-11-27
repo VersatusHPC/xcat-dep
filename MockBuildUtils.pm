@@ -1286,6 +1286,13 @@ sub perl_mock_cfg_text {
     my ($base_cfg, $epoch, $compat_repo) = @_;
     my $text = "include('/etc/mock/${base_cfg}.cfg')\n"
              . "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$epoch'\n";
+    # EPEL 8 perlcompat.req never reads its stdin, and rpm 4.14 does not ignore SIGPIPE when it
+    # writes the file name there. A generator that exits first kills rpmbuild. Read stdin to EOF,
+    # then run the packaged generator. EL9 and later define this generator as a Lua macro.
+    $text .= "config_opts['macros']['%__perlcompat_requires'] = "
+           . "'/bin/sh -c \\'cat >/dev/null; exec \"\$0\" \"\$\@\"\\' "
+           . "%{_rpmconfigdir}/perlcompat.req %{perl_version}'\n"
+        if $base_cfg =~ /\+epel-8-/;
     return $text unless perl_buildreq_compat_needed($base_cfg);
     die "perl_mock_cfg_text: $base_cfg needs the perl BuildRequires"
       . " compat repository and none was given\n"
