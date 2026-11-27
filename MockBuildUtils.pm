@@ -34,6 +34,7 @@ our @EXPORT_OK = qw(
     goconserver_needs_pinned_go goconserver_pinned_go_buildrequires
     host_build_payload_compressor
     recover_common_repository
+    copy_mock_logs record_package_result
 );
 
 # install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
@@ -1352,6 +1353,43 @@ sub mock_result_dirs {
         chown $uid, -1, $result or die "Cannot give $result to uid $uid: $!\n";
     }
     return @dirs;
+}
+
+# The logs mock writes into a --resultdir. build.log carries the rpmbuild output, root.log the
+# buildroot install.
+my @MOCK_LOGS = qw(build.log root.log state.log hw_info.log installed_pkgs.log);
+
+# copy_mock_logs($result_dir, $log_dir, $prefix): copy each mock log present in $result_dir to
+# $log_dir/<prefix><name>. Dies when a copy fails. Returns the names it wrote.
+sub copy_mock_logs {
+    my ($result_dir, $log_dir, $prefix) = @_;
+    $prefix //= '';
+    my @copied;
+    for my $log (@MOCK_LOGS) {
+        my $src = "$result_dir/$log";
+        next if !-f $src;
+        copy($src, "$log_dir/$prefix$log") or die "Failed to copy $src to $log_dir: $!\n";
+        push @copied, "$prefix$log";
+    }
+    return @copied;
+}
+
+# record_package_result(%args): write status.txt, and error.txt for a failure, into
+# $args{log_dir}. Arguments: ok, summary, error, log_dir, and result_dirs, a list of
+# [dir, prefix] pairs that hold mock logs. Returns the status word.
+sub record_package_result {
+    my (%args) = @_;
+    my $log_dir = $args{log_dir};
+    if (!$args{ok}) {
+        open my $efh, '>', "$log_dir/error.txt" or die "Cannot write $log_dir/error.txt: $!\n";
+        print {$efh} "$args{error}\n";
+        close $efh;
+    }
+    my $status = $args{ok} ? 'PASS' : 'FAIL';
+    open my $sfh, '>', "$log_dir/status.txt" or die "Cannot write $log_dir/status.txt: $!\n";
+    print {$sfh} "$status\t$args{summary}\n";
+    close $sfh;
+    return $status;
 }
 
 1;

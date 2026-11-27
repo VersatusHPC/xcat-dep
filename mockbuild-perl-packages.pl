@@ -12,7 +12,7 @@ use Parallel::ForkManager;
 use lib $RealBin, "$RealBin/lib";
 use MockBuildUtils qw(mock_result_dirs make_traversable_path
                       perl_buildreq_compat_needed perl_buildreq_compat_spec perl_mock_cfg_text
-                      mock_scrub_command);
+                      mock_scrub_command copy_mock_logs record_package_result);
 
 my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
@@ -663,18 +663,8 @@ sub build_package {
         }
         copy($srpm_path, $pkg_result) or die "Failed to copy $srpm_path to $pkg_result: $!\n";
 
-        for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
-            my $src = "$rebuild_result/$log";
-            next if !-f $src;
-            copy($src, "$pkg_log/$log") or die "Failed to copy $src to $pkg_log: $!\n";
-        }
-        if (-d "$pkg_run_dir/srpm") {
-            for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
-                my $src = "$pkg_run_dir/srpm/$log";
-                next if !-f $src;
-                copy($src, "$pkg_log/srpm-$log") or die "Failed to copy $src to $pkg_log: $!\n";
-            }
-        }
+        copy_mock_logs($rebuild_result, $pkg_log, '');
+        copy_mock_logs($srpm_result, $pkg_log, 'srpm-');
 
         if ($cfg->{rpm_arch} eq 'native' && $arch ne $host_arch) {
             # A cross-built XS module cannot be loaded on this host: install the rpm into the
@@ -696,20 +686,22 @@ sub build_package {
         $ok = 1;
     };
 
+    my $err = '';
     if ($@) {
-        my $err = $@;
+        $err = $@;
         chomp $err;
         $err =~ s/\s+/ /g;
         $summary = "$pkg FAIL $err";
-        open my $efh, '>', "$pkg_log/error.txt" or die "Cannot write $pkg_log/error.txt: $!\n";
-        print {$efh} "$err\n";
-        close $efh;
         print "ERROR: $err\n";
     }
 
-    open my $sfh, '>', $status_file or die "Cannot write $status_file: $!\n";
-    print {$sfh} (($ok ? 'PASS' : 'FAIL') . "\t$summary\n");
-    close $sfh;
+    record_package_result(
+        ok          => $ok,
+        summary     => $summary,
+        error       => $err,
+        log_dir     => $pkg_log,
+        result_dirs => [[$rebuild_result, ''], [$srpm_result, 'srpm-'], [$restamp_result, 'restamp-']],
+    );
     return $ok;
 }
 
