@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
+ExecStartPre=/bin/mkdir -p /var/lib/goconserver
 ExecStart=/usr/bin/goconserver
 Restart=on-failure
-StateDirectory=goconserver
 
 [Install]
 WantedBy=multi-user.target

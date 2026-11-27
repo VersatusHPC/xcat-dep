@@ -177,7 +177,8 @@ die "pinned go.mod/go.sum missing under $gomod_dir (regenerate per gomod/README.
 copy("$gomod_dir/go.mod", "$src_dir/go.mod") or die "copy go.mod: $!\n";
 copy("$gomod_dir/go.sum", "$src_dir/go.sum") or die "copy go.sum: $!\n";
 
-# The unit that every rpm target ships is goconserver/goconserver.service.
+# The unit that every rpm target ships is goconserver/goconserver.service. It must load on
+# systemd 228 (openSUSE Leap 42.3), so it carries no StateDirectory= (systemd 235).
 my $service_unit = read_binary("$pkg_dir/goconserver.service");
 
 # The goconserver binary parses server.conf as YAML. Ship a VALID YAML default (the old INI-style
