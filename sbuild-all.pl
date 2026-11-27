@@ -50,6 +50,7 @@ use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifes
                   verify_repo_packages verify_repo_signature verify_repo_arches
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
+                  manifest_validation_arches
                   codename_to_version known_codenames supported_arches is_supported_arch
                   stranded_suites
                   chroot_name chroot_sources_list
@@ -747,22 +748,26 @@ sub validate_manifest {
     print_step('Validate complete expected set + version pins');
     return if $dry_run;
     my @fail;
-    for my $cn (@dist_list) {
-        my $tgt = "$cn-$arch";
-        my $dir = "$staging/$cn/$arch";
-        for my $pkg (required_pkgs([sort keys %{$MANIFEST{$tgt}}], $skip_genesis, $skip_xcat_dep)) {
-            # arch:all single-producer packages are built on amd64 and are NOT staged for this arch, so
-            # do not validate them per-arch here (build_one_codename skips them via the SAME rule). Their
-            # presence on this arch is verified later against the PUBLISHED index (verify_assembled_repo).
-            next if pkg_skip_on_arch($pkg, $arch);
-            my $want = $MANIFEST{$tgt}{$pkg};
-            # $arch disambiguates the logical 'xcat-genesis-base': both arch-suffixed genesis debs are
-            # staged on the amd64 host (the cross-arch ppc one for #7610) and they carry DIFFERENT
-            # revisions, so only this target's arch may be considered.
-            my $got  = deb_version($dir, $pkg, $arch);
-            if (!defined $got) { push @fail, "[$tgt] MISSING $pkg"; next; }
-            push @fail, "[$tgt] $pkg: built $got, manifest pins $want"
-                unless version_matches($got, $want);
+    my $expect = $publish ? resolve_expect_arches('publish', $apt_dir) : [];
+    for my $va (@{ manifest_validation_arches($arch, $skip_build, $publish, $expect) }) {
+        for my $cn (@dist_list) {
+            my $tgt = "$cn-$va";
+            my $dir = "$staging/$cn/$va";
+            unless ($MANIFEST{$tgt}) { push @fail, "[$tgt] no manifest section in $manifest"; next; }
+            for my $pkg (required_pkgs([sort keys %{$MANIFEST{$tgt}}], $skip_genesis, $skip_xcat_dep)) {
+                # arch:all single-producer packages are built on amd64 and are NOT staged for this arch, so
+                # do not validate them per-arch here (build_one_codename skips them via the SAME rule). Their
+                # presence on this arch is verified later against the PUBLISHED index (verify_assembled_repo).
+                next if pkg_skip_on_arch($pkg, $va);
+                my $want = $MANIFEST{$tgt}{$pkg};
+                # The arch disambiguates the logical 'xcat-genesis-base': both arch-suffixed genesis debs are
+                # staged on the amd64 host (the cross-arch ppc one for #7610) and they carry DIFFERENT
+                # revisions, so only this target's arch may be considered.
+                my $got  = deb_version($dir, $pkg, $va);
+                if (!defined $got) { push @fail, "[$tgt] MISSING $pkg"; next; }
+                push @fail, "[$tgt] $pkg: built $got, manifest pins $want"
+                    unless version_matches($got, $want);
+            }
         }
     }
     die "FATAL: manifest validation failed:\n  " . join("\n  ", @fail) . "\n" if @fail;
