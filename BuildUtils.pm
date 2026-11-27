@@ -33,6 +33,7 @@ our @EXPORT_OK = qw(
     verify_repo_packages verify_repo_signature verify_repo_arches
     parse_packages_index parse_release_architectures resolve_present_names
     index_has_native_arch control_binary_arch skip_arch_all_on
+    manifest_validation_arches
     codename_to_version version_to_codename known_codenames
     stranded_suites
     supported_arches is_supported_arch
@@ -381,6 +382,30 @@ sub control_binary_arch {
         return $a;   # undef if this paragraph lacks an Architecture field
     }
     return undef;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+=head3 manifest_validation_arches
+
+    Descriptions: The arches whose staging/<cn>/<arch> tree validate_manifest checks.
+    Arguments:    $build_arch  - the --arch of this run
+                  $skip_build  - true for a run that builds nothing
+                  $publish     - true for a run that publishes
+                  $expect_aref - the expected arch set (resolve_expect_arches)
+    Returns:      A sorted array reference of arch names.
+
+=cut
+
+#---------------------------------------------------------------------------------------------------
+sub manifest_validation_arches {
+    my ($build_arch, $skip_build, $publish, $expect_aref) = @_;
+    my %u;
+    # A run that builds nothing staged nothing for its own --arch. It ships the expected set.
+    $u{$build_arch} = 1 unless $skip_build;
+    if ($publish) { $u{$_} = 1 for @{ $expect_aref || [] }; }
+    $u{$build_arch} = 1 unless %u;
+    return [sort keys %u];
 }
 
 # skip_arch_all_on($control_text, $binpkg, $arch): true iff $binpkg is an Architecture:all

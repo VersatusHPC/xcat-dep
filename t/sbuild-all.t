@@ -19,7 +19,7 @@ use BuildUtils qw(install_deps_packages install_deps_command missing_perl_module
                   index_has_native_arch control_binary_arch skip_arch_all_on
                   supported_arches is_supported_arch
                   codename_to_version version_to_codename known_codenames
-                  stranded_suites
+                  stranded_suites manifest_validation_arches
                   chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
                   control_field
                   deb_field deb_version deb_hash cross_copy_genesis_deb
@@ -909,6 +909,22 @@ STUB
     close($fh);
     is_deeply([ stranded_suites($stray, ['jammy']) ], [],
         'a file under dists/ is not counted as a suite');
+}
+
+# ---- manifest_validation_arches: which staged arches the zero-tolerance check reads ----------------
+# A publish-only run (--skip-build) builds nothing, so the host's default --arch is not the arch it
+# stages from. xcat-ci #317 ran ppc64el only and the finalize step demanded amd64 debs it never built.
+{
+    is_deeply(manifest_validation_arches('amd64', 1, 1, ['ppc64el']), ['ppc64el'],
+        'publish-only run validates the expected arch, not the default --arch');
+    is_deeply(manifest_validation_arches('amd64', 1, 1, ['amd64', 'ppc64el']), ['amd64', 'ppc64el'],
+        'publish-only run validates every expected arch');
+    is_deeply(manifest_validation_arches('ppc64el', 0, 0, []), ['ppc64el'],
+        'build-only run validates the arch it built');
+    is_deeply(manifest_validation_arches('amd64', 0, 1, ['ppc64el']), ['amd64', 'ppc64el'],
+        'build+publish run validates the built arch and every expected arch');
+    is_deeply(manifest_validation_arches('amd64', 1, 0, []), ['amd64'],
+        'skip-build run that does not publish keeps the --arch check');
 }
 
 done_testing;
