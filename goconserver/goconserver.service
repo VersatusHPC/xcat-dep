@@ -1,0 +1,12 @@
+[Unit]
+Description=goconserver console server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/goconserver
+Restart=on-failure
+StateDirectory=goconserver
+
+[Install]
+WantedBy=multi-user.target
