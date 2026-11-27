@@ -59,8 +59,8 @@ sub run_build {
     my ($bin, $rec, $work) = ("$root/bin", "$root/rec", "$root/work");
     make_path($bin, $rec, $work);
 
-    # The build runs with CWD = a copy of the package dir, and reads ../gomod and ./debian from it.
-    system('cp', '-rL', "$pkg_dir/$_", "$work/$_") == 0 or die "stage $_: $!" for qw(gomod debian);
+    # The build runs with CWD = a copy of the package dir, and reads ../gomod, ./debian and ./patches from it.
+    system('cp', '-rL', "$pkg_dir/$_", "$work/$_") == 0 or die "stage $_: $!" for qw(gomod debian patches);
 
     # dpkg answers for the CHROOT, which is the architecture the build must produce.
     write_stub($bin, 'dpkg', qq{

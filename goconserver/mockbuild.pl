@@ -158,6 +158,8 @@ if (defined($native_repo)) {
     $go_ldflags .= " -X main.Commit=$source_commit -X main.BuildTime=$build_time";
 }
 
+apply_patches($src_dir);
+
 # etcd storage backend has broken deps with modern Go modules; xCAT only uses file storage.
 unlink "$src_dir/storage/etcd.go";
 remove_tree("$src_dir/storage/etcd") if -d "$src_dir/storage/etcd";
@@ -398,6 +400,32 @@ print_step("Completed");
 print "Results in: $result_dir\n";
 exit 0;
 
+
+#-------------------------------------------------------------------------------
+
+=head3 apply_patches
+
+    Descriptions:
+        Apply goconserver/patches/*.patch, in name order, to the fetched source tree.
+        git apply refuses a patch that does not apply, so a pin bump that conflicts
+        stops the build.
+    Arguments:
+        $src_dir: the goconserver source tree (still a git checkout)
+    Returns:
+        nothing; dies on a missing or failed patch
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub apply_patches {
+    my ($src_dir) = @_;
+    my @patches = sort glob("$pkg_dir/patches/*.patch");
+    die "no patches under $pkg_dir/patches\n" unless @patches;
+    for my $patch (@patches) {
+        print_step("Apply " . basename($patch));
+        run("git -C " . sh_quote($src_dir) . " apply " . sh_quote($patch));
+    }
+}
 
 # A forcearch mock chroot runs every command through qemu, so an in-chroot Go compile would run the
 # whole toolchain emulated. For a foreign target arch the build cross-compiles on the host with the
