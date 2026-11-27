@@ -1376,11 +1376,16 @@ sub copy_mock_logs {
 
 # record_package_result(%args): write status.txt, and error.txt for a failure, into
 # $args{log_dir}. Arguments: ok, summary, error, log_dir, and result_dirs, a list of
-# [dir, prefix] pairs that hold mock logs. Returns the status word.
+# [dir, prefix] pairs that hold mock logs. A failure also copies those mock logs: the work
+# directory that holds them is removed when the target ends. Returns the status word.
 sub record_package_result {
     my (%args) = @_;
     my $log_dir = $args{log_dir};
     if (!$args{ok}) {
+        # A copy error must not stop the status write below.
+        for my $rd (@{ $args{result_dirs} || [] }) {
+            eval { copy_mock_logs($rd->[0], $log_dir, $rd->[1]); 1 } or warn "WARN: $@";
+        }
         open my $efh, '>', "$log_dir/error.txt" or die "Cannot write $log_dir/error.txt: $!\n";
         print {$efh} "$args{error}\n";
         close $efh;
