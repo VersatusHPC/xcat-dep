@@ -13,7 +13,7 @@ use lib "$FindBin::Bin/..", "$FindBin::Bin/../lib";
 use MockBuildUtils qw(openeuler_build_target openeuler_repo_subdir
                       goconserver_needs_pinned_go goconserver_pinned_go_buildrequires
                       mock_scrub_command);
-use XCAT::BuildUtils qw(digest_file read_lines);
+use XCAT::BuildUtils qw(digest_file read_binary read_lines);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path("$script_dir/..");
@@ -158,6 +158,8 @@ if (defined($native_repo)) {
     $go_ldflags .= " -X main.Commit=$source_commit -X main.BuildTime=$build_time";
 }
 
+apply_patches($src_dir);
+
 # etcd storage backend has broken deps with modern Go modules; xCAT only uses file storage.
 unlink "$src_dir/storage/etcd.go";
 remove_tree("$src_dir/storage/etcd") if -d "$src_dir/storage/etcd";
@@ -175,20 +177,9 @@ die "pinned go.mod/go.sum missing under $gomod_dir (regenerate per gomod/README.
 copy("$gomod_dir/go.mod", "$src_dir/go.mod") or die "copy go.mod: $!\n";
 copy("$gomod_dir/go.sum", "$src_dir/go.sum") or die "copy go.sum: $!\n";
 
-my $service_unit = <<'SERVICE';
-[Unit]
-Description=goconserver console server
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/goconserver
-Restart=on-failure
-StateDirectory=goconserver
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
+# The unit that every rpm target ships is goconserver/goconserver.service. It must load on
+# systemd 228 (openSUSE Leap 42.3), so it carries no StateDirectory= (systemd 235).
+my $service_unit = read_binary("$pkg_dir/goconserver.service");
 
 # The goconserver binary parses server.conf as YAML. Ship a VALID YAML default (the old INI-style
 # [server] block is read by the YAML parser as a sequence -> `panic: cannot unmarshal !!seq` at
@@ -398,6 +389,32 @@ print_step("Completed");
 print "Results in: $result_dir\n";
 exit 0;
 
+
+#-------------------------------------------------------------------------------
+
+=head3 apply_patches
+
+    Descriptions:
+        Apply goconserver/patches/*.patch, in name order, to the fetched source tree.
+        git apply refuses a patch that does not apply, so a pin bump that conflicts
+        stops the build.
+    Arguments:
+        $src_dir: the goconserver source tree (still a git checkout)
+    Returns:
+        nothing; dies on a missing or failed patch
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub apply_patches {
+    my ($src_dir) = @_;
+    my @patches = sort glob("$pkg_dir/patches/*.patch");
+    die "no patches under $pkg_dir/patches\n" unless @patches;
+    for my $patch (@patches) {
+        print_step("Apply " . basename($patch));
+        run("git -C " . sh_quote($src_dir) . " apply " . sh_quote($patch));
+    }
+}
 
 # A forcearch mock chroot runs every command through qemu, so an in-chroot Go compile would run the
 # whole toolchain emulated. For a foreign target arch the build cross-compiles on the host with the

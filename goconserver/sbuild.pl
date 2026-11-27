@@ -95,6 +95,12 @@ git -C "$gc" remote add origin "$REPO"
 git -C "$gc" fetch -q --depth 1 origin "$REF"
 git -C "$gc" checkout -q FETCH_HEAD
 
+# patches/ carries the xCAT changes to the pinned source. git apply refuses one that does not apply.
+patches=$(ls patches/*.patch)
+for p in $patches; do
+    git -C "$gc" apply "$PWD/$p"
+done
+
 # etcd storage backend has broken deps with modern Go modules
 rm -rf "$gc/storage/etcd.go" "$gc/storage/etcd/"
 cp -rL debian "$gc/debian"

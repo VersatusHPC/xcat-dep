@@ -1,0 +1,15 @@
+diff --git a/console/server.go b/console/server.go
+index 15f5cb2..583c9a5 100644
+--- a/console/server.go
++++ b/console/server.go
+@@ -377,7 +377,9 @@ func (self *ConsoleServer) registerSignal() {
+ 	exitHandler := func(s os.Signal, arg interface{}) {
+ 		plog.Info(fmt.Sprintf("Handle signal: %v\n", s))
+ 		common.CloseLogger()
+-		os.Exit(1)
++		// SIGTERM and SIGINT ask for a shutdown. systemd stops the unit with SIGTERM and
++		// records any status other than 0 as a failure of the unit.
++		os.Exit(0)
+ 	}
+ 	reloadHandler := func(s os.Signal, arg interface{}) {
+ 		plog.Info(fmt.Sprintf("Handle signal: %v, reload configuration file\n", s))
