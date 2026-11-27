@@ -657,9 +657,15 @@ sub read_manifest {
     return %m;
 }
 
+# createrepo_c_cmd($dir, $epoch, $target): the index command for one repository.
+#
+# zypper 1.13 on openSUSE Leap 42.3 has no zstd reader, and createrepo_c writes zstd by default.
+# Every openSUSE cell gets gzip metadata, the format each Leap release reads.
 sub createrepo_c_cmd {
-    my ($dir, $epoch) = @_;
-    return 'createrepo_c --update '
+    my ($dir, $epoch, $target) = @_;
+    my $compress = (defined($target) && $target =~ /\A(?:opensuse-|sles)/)
+        ? '--compress-type gz --general-compress-type gz ' : '';
+    return 'createrepo_c --update ' . $compress
         . '--revision ' . sh_quote($epoch) . ' --set-timestamp-to-revision '
         . sh_quote($dir);
 }
@@ -691,7 +697,7 @@ sub sign_and_index_repo {
             . ' --define ' . sh_quote("%__gpg $options{gpg_program}") . ' --addsign '
             . join(' ', map { sh_quote($_) } @rpms));
     }
-    $run->(createrepo_c_cmd($dir, $options{source_date_epoch}));
+    $run->(createrepo_c_cmd($dir, $options{source_date_epoch}, $options{target}));
     if ($options{gpg_sign}) {
         local $ENV{GNUPGHOME} = $options{gpg_home} if $options{gpg_home};
         my $repomd = "$dir/repodata/repomd.xml";

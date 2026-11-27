@@ -1079,12 +1079,12 @@ if (!$dry_run && $copied_srpms == 0) {
 if (!$skip_createrepo) {
     run_step(
         step => 'Run createrepo',
-        cmd  => createrepo_c_cmd($repo_dir),
+        cmd  => createrepo_c_cmd($repo_dir, $target),
         log  => "$log_root/createrepo.log",
     );
     run_step(
         step => 'Run createrepo for SRPM repo',
-        cmd  => createrepo_c_cmd($srpm_repo_dir),
+        cmd  => createrepo_c_cmd($srpm_repo_dir, $target),
         log  => "$log_root/createrepo-srpm.log",
     );
 }
@@ -1355,7 +1355,7 @@ sub deploy_target {
         # rpm an earlier layout left in the collection. On the STAGE, so the published cell is
         # already correct when it is swapped in.
         remove_genesis_packages($stage, 0) if $genesis_release;
-        sign_and_index_repo($stage, $NATIVE_PLANS{$tgt});
+        sign_and_index_repo($stage, $NATIVE_PLANS{$tgt}, $tgt);
         write_dep_repo_metadata($stage, $rel, $tarch, $subdir);
         # Automatic completeness + signature gate on the freshly signed cell -- the single
         # consolidated gate (verify_target_repo, the same one --verify-repo runs). Asserts every
@@ -1523,16 +1523,16 @@ sub publish_file {
 # --database is deprecated in createrepo_c 1.1.2 and --no-database is its default. dnf on el8+ and
 # zypper read the XML.
 sub createrepo_c_cmd {
-    my ($dir) = @_;
-    return MockBuildUtils::createrepo_c_cmd($dir, $SOURCE_DATE_EPOCH);
+    my ($dir, $target) = @_;
+    return MockBuildUtils::createrepo_c_cmd($dir, $SOURCE_DATE_EPOCH, $target);
 }
 
 sub sign_and_index_repo {
-    my ($dir, $native) = @_;
+    my ($dir, $native, $target) = @_;
     return MockBuildUtils::sign_and_index_repo($dir, $native,
         gpg_sign => $gpg_sign, gpg_home => $gpg_home,
         gpg_key_name => $gpg_key_name, gpg_program => $gpg_program,
-        source_date_epoch => $SOURCE_DATE_EPOCH, run => \&run_simple);
+        source_date_epoch => $SOURCE_DATE_EPOCH, run => \&run_simple, target => $target);
 }
 
 sub write_dep_repo_metadata {
@@ -1643,7 +1643,7 @@ EOF
 # one; the rest keep their build-time signatures).
 sub reindex_and_sign_repo {
     my ($dir) = @_;
-    run_simple(createrepo_c_cmd($dir));
+    run_simple(createrepo_c_cmd($dir, MockBuildUtils::derive_target_from_repo_path($dir)));
     if ($gpg_sign) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
