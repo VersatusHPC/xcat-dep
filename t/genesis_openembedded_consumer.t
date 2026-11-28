@@ -48,6 +48,9 @@ my $epoch = 1787293573;
 my $tmp = tempdir(CLEANUP => 1);
 # every suite sbuild-all.pl knows; publishing a Genesis release must cover all of them
 my @APT_SUITES = qw(focal jammy noble resolute);
+# The runs publish with --expect-arch "amd64 ppc64el", and sbuild-all.pl validates the staging
+# and the manifest section of every expected arch.
+my @APT_ARCHES = qw(amd64 ppc64el);
 
 test_activation_helper();
 
@@ -379,7 +382,7 @@ sub write_apt_manifest {
     make_path((File::Basename::dirname($path)));
     write_binary(
         $path,
-        join('', map { "[$_-amd64]\nxcat-genesis-base=*\n" } @APT_SUITES)
+        join('', map { my $cn = $_; map { "[$cn-$_]\nxcat-genesis-base=*\n" } @APT_ARCHES } @APT_SUITES)
           . "\n[shared]\n"
           . join('', map { "$_=$shared{$_}\n" } sort keys %shared),
     );
@@ -389,21 +392,25 @@ sub write_apt_manifest {
 # no Genesis release.
 sub stage_legacy_deb {
     my ($root, $output) = @_;
-    my $staging = "$output/staging/noble/amd64";
-    make_path($staging);
-    make_legacy_deb($root, "$staging/xcat-genesis-base-amd64_1_all.deb");
-    return $staging;
+    for my $arch (@APT_ARCHES) {
+        my $staging = "$output/staging/noble/$arch";
+        make_path($staging);
+        make_legacy_deb("$root-$arch", "$staging/xcat-genesis-base-${arch}_1_all.deb", undef, $arch);
+    }
+    return "$output/staging/noble/amd64";
 }
 
 # Stage one legacy genesis-base deb for each suite, standing in for a completed build.
 sub stage_apt_suites {
     my ($output, $package_root, $content) = @_;
-    my $package = "$package_root.deb";
-    make_legacy_deb($package_root, $package, $content);
-    for my $codename (@APT_SUITES) {
-        my $staged = "$output/staging/$codename/amd64";
-        make_path($staged);
-        copy($package, "$staged/xcat-genesis-base-amd64_1_all.deb") or die $!;
+    for my $arch (@APT_ARCHES) {
+        my $package = "$package_root-$arch.deb";
+        make_legacy_deb("$package_root-$arch", $package, $content, $arch);
+        for my $codename (@APT_SUITES) {
+            my $staged = "$output/staging/$codename/$arch";
+            make_path($staged);
+            copy($package, "$staged/xcat-genesis-base-${arch}_1_all.deb") or die $!;
+        }
     }
     return "$output/staging/noble/amd64";
 }
@@ -1437,12 +1444,13 @@ sub make_rpm_dependencies {
 }
 
 sub make_legacy_deb {
-    my ($root, $output, $description) = @_;
+    my ($root, $output, $description, $arch) = @_;
     $description //= 'repository test package';
+    $arch //= 'amd64';
     make_path("$root/DEBIAN");
     write_binary(
         "$root/DEBIAN/control",
-        "Package: xcat-genesis-base-amd64\nVersion: 1\nArchitecture: all\n"
+        "Package: xcat-genesis-base-$arch\nVersion: 1\nArchitecture: all\n"
           . "Maintainer: xCAT <xcat-user\@lists.sourceforge.net>\n"
           . "Description: $description\n",
     );
